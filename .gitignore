@@ -1,0 +1,53 @@
+# Environments
+.venv/
+venv/
+ENV/
+env/
+*.env
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+*.pyc
+
+# Distribution & Build Artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+*.spec.bak
+
+# Model Weights (~4GB files - download automatically via app on first run)
+models/*
+!models/.gitkeep
+
+# Static Binaries (>100MB exceeds GitHub standard push limit)
+bin/*
+!bin/.gitkeep
+
+# Logs and Sample Transcripts
+*.log
+stt_transcription.txt
+audio.wav
+
+# Temporary Extraction & Audio Files
+*.extracted.wav
+*.tmp
+tmp*
+
+# IDE & OS Metadata
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+.DS_Store
+Thumbs.db
+
+# Developer Local Notes
+LOCALGUIDE.md
+LOCALGUID.md

@@ -1,0 +1,30 @@
+name: Feature Request
+description: Suggest an idea or feature for SubtitleGo
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea or feature request? Let us know what you would like to see added.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement / Context
+      description: Is your feature request related to a problem or limitation?
+      placeholder: I'm always frustrated when...
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the solution or workflow you'd like to see implemented.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Describe any alternative solutions or features you've considered.
+    validations:
+      required: false

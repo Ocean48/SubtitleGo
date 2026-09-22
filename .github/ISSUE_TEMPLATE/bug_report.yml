@@ -1,0 +1,63 @@
+name: Bug Report
+description: Create a report to help us improve SubtitleGo
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue! Please fill out the form below with as much detail as possible.
+  - type: input
+    id: version
+    attributes:
+      label: SubtitleGo Version
+      description: What version of SubtitleGo are you running? (e.g., v1.0.0, running from source main)
+      placeholder: v1.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Windows 11 (64-bit)
+        - Windows 10 (64-bit)
+        - Linux (x86_64)
+        - macOS
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware / GPU
+      description: What GPU or CPU are you using? (e.g., NVIDIA RTX 4070, RTX 5080, CPU mode)
+      placeholder: NVIDIA RTX 4080 (CUDA 12.1)
+    validations:
+      required: false
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the Bug
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior.
+      placeholder: |
+        1. Open SubtitleGo
+        2. Drag and drop video file 'sample.mp4' into the queue
+        3. Click 'Start Processing'
+        4. See error
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console Output or Error Logs
+      description: Paste any error messages, terminal logs, or tracebacks here.
+      render: shell
+    validations:
+      required: false
