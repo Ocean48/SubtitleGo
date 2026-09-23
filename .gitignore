@@ -12,6 +12,17 @@ __pycache__/
 *.pyd
 *.pyc
 
+# Testing, Coverage & Linters
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+
 # Distribution & Build Artifacts
 build/
 dist/
@@ -22,15 +33,23 @@ dist/
 # Model Weights (~4GB files - download automatically via app on first run)
 models/*
 !models/.gitkeep
+*.safetensors
+*.pt
+*.pth
+*.bin
+*.onnx
 
 # Static Binaries (>100MB exceeds GitHub standard push limit)
 bin/*
 !bin/.gitkeep
 
-# Logs and Sample Transcripts
+# Logs, Transcripts, and Subtitle Test Outputs
 *.log
 stt_transcription.txt
 audio.wav
+sample_output.*
+output_*.srt
+output_*.vtt
 
 # Temporary Extraction & Audio Files
 *.extracted.wav
