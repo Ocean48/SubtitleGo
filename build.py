@@ -124,18 +124,45 @@ def build_and_package(
         release_zip_path = os.path.join(root_dir, "dist", release_zip_name)
         print(f"\nCreating release archive: {release_zip_path} ...")
 
-        # Select items to archive
-        items_to_zip = [dist_app_dir]
-        if sys.platform == "darwin" and os.path.exists(target_app_bundle):
-            items_to_zip.append(target_app_bundle)
+        if os.path.exists(release_zip_path):
+            try:
+                os.unlink(release_zip_path)
+            except Exception:
+                pass
 
-        with zipfile.ZipFile(release_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-            for item_dir in items_to_zip:
-                for root, _, files in os.walk(item_dir):
-                    for file in files:
-                        full_path = os.path.join(root, file)
-                        rel_path = os.path.relpath(full_path, os.path.join(root_dir, "dist"))
-                        zipf.write(full_path, rel_path)
+        # On macOS, use Apple's native ditto tool to preserve app bundle symlinks, permissions, and resource forks
+        packaged_with_ditto = False
+        if sys.platform == "darwin" and os.path.exists(target_app_bundle) and shutil.which("ditto"):
+            # Ensure executable permission on main binary inside bundle
+            app_binary = os.path.join(target_app_bundle, "Contents", "MacOS", "SubtitleStudio")
+            if os.path.exists(app_binary):
+                os.chmod(app_binary, 0o755)
+
+            cmd = ["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", "SubtitleStudio.app", release_zip_path]
+            res = subprocess.run(cmd, cwd=os.path.join(root_dir, "dist"))
+            if res.returncode == 0:
+                packaged_with_ditto = True
+
+        if not packaged_with_ditto:
+            # Select items to archive
+            items_to_zip = [dist_app_dir]
+            if sys.platform == "darwin" and os.path.exists(target_app_bundle):
+                items_to_zip.append(target_app_bundle)
+
+            with zipfile.ZipFile(release_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+                for item_dir in items_to_zip:
+                    for root, _, files in os.walk(item_dir):
+                        for file in files:
+                            full_path = os.path.join(root, file)
+                            rel_path = os.path.relpath(full_path, os.path.join(root_dir, "dist"))
+
+                            zinfo = zipfile.ZipInfo.from_file(full_path, rel_path)
+                            # Preserve POSIX file permissions in zip header
+                            if sys.platform != "win32":
+                                st = os.stat(full_path)
+                                zinfo.external_attr = (st.st_mode & 0xFFFF) << 16
+                            with open(full_path, "rb") as f:
+                                zipf.writestr(zinfo, f.read())
 
         zip_size_mb = os.path.getsize(release_zip_path) / (1024 * 1024)
         print("\nPackage generated successfully!")
