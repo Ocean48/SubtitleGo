@@ -39,6 +39,7 @@ class TranscriptionWorker(QThread):
         max_segment_length: float = 4.5,
         min_segment_length: float = 0.25,
         silence_thresh_db: float = -36.0,
+        batch_size: Optional[int] = None,
         parent=None
     ):
         super().__init__(parent)
@@ -50,6 +51,7 @@ class TranscriptionWorker(QThread):
         self.max_segment_length = max_segment_length
         self.min_segment_length = min_segment_length
         self.silence_thresh_db = silence_thresh_db
+        self.batch_size = batch_size
         self._is_cancelled = False
 
     def cancel(self):
@@ -134,15 +136,18 @@ class TranscriptionWorker(QThread):
             model_mgr = ModelManager.get_instance()
             if not model_mgr.model:
                 self.sig_progress.emit(self.file_id, 2, "2/3 Initializing Qwen3-ASR model...", 38.0)
-                model_mgr.load_model()
+                model_mgr.load_model(max_batch_size=self.batch_size)
 
             if self._is_cancelled:
                 return
 
-            # Execute batch inference in chunks of 16
+            # Determine inference batch size: respect user override or fallback to dynamic recommendation
+            from .model_manager import get_recommended_settings
+            rec = get_recommended_settings()
+            batch_size = self.batch_size if (self.batch_size and self.batch_size > 0) else rec["recommended_batch_size"]
+
             raw_segments: List[Dict[str, Any]] = []
             detected_languages: List[str] = []
-            batch_size = 16
             total_chunks = len(prepared_chunks)
 
             for b_idx in range(0, total_chunks, batch_size):
@@ -168,7 +173,7 @@ class TranscriptionWorker(QThread):
                 progress_val = 35.0 + ((b_idx + len(batch)) / total_chunks) * 30.0
                 self.sig_progress.emit(
                     self.file_id, 2,
-                    f"2/3 Transcribing chunk {min(b_idx + batch_size, total_chunks)}/{total_chunks}",
+                    f"2/3 Transcribing chunk {min(b_idx + len(batch), total_chunks)}/{total_chunks}",
                     progress_val
                 )
 
@@ -218,9 +223,16 @@ class TranscriptionWorker(QThread):
         except Exception as e:
             if not self._is_cancelled:
                 import traceback
-                print(f"Transcription error for {self.filename}: {e}")
+                print(f"\n[TranscriptionWorker] Error processing {self.filename}: {e}")
                 traceback.print_exc()
-                self.sig_error.emit(self.file_id, str(e))
+
+                err_str = str(e)
+                if any(k in err_str.lower() for k in ["insufficient memory", "out of memory", "command buffer", "kiogpucommandbuffercallbackerroroutofmemory"]):
+                    formatted_err = "GPU Out of Memory (Metal MPS). Please reduce concurrency to 1 or switch to CPU mode in Settings."
+                else:
+                    formatted_err = f"{type(e).__name__}: {err_str}" if err_str else type(e).__name__
+
+                self.sig_error.emit(self.file_id, formatted_err)
         finally:
             # Clean up temporary WAV files
             if converted_wav and os.path.exists(converted_wav):

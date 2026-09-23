@@ -168,6 +168,7 @@ class QueueItemWidget(QFrame):
         # Stage message
         self.lbl_stage = QLabel(item_data.get("stage_msg", "Queued"))
         self.lbl_stage.setStyleSheet("font-size: 11px; color: #94a3b8;")
+        self.lbl_stage.setWordWrap(True)
         layout.addWidget(self.lbl_stage)
 
     def _apply_badge_style(self, status: str):
@@ -202,6 +203,15 @@ class QueueItemWidget(QFrame):
     def update_state(self, status: str, stage_msg: str, progress: float):
         self._apply_badge_style(status)
         self.lbl_stage.setText(stage_msg)
+        if status == "error":
+            self.lbl_stage.setStyleSheet("font-size: 11px; color: #ef4444; font-weight: 500;")
+            self.lbl_stage.setToolTip(stage_msg)
+            self.setToolTip(f"Error: {stage_msg}")
+        else:
+            self.lbl_stage.setStyleSheet("font-size: 11px; color: #94a3b8;")
+            self.lbl_stage.setToolTip("")
+            self.setToolTip("")
+
         self.progress_bar.setValue(int(progress))
         self.btn_stop.setVisible(status == "processing")
         self.btn_retry.setVisible(status in ["error", "cancelled"])
@@ -229,7 +239,8 @@ class QueueItemWidget(QFrame):
         act_select.triggered.connect(lambda: self.sig_selected.emit(self.file_id))
 
         if self.media_path and os.path.exists(self.media_path):
-            act_folder = menu.addAction("Show in File Explorer")
+            folder_label = "Show in Finder" if sys.platform == "darwin" else ("Show in File Explorer" if sys.platform == "win32" else "Show in File Manager")
+            act_folder = menu.addAction(folder_label)
             act_folder.triggered.connect(self._open_in_explorer)
 
         menu.addSeparator()
@@ -256,10 +267,12 @@ class QueueItemWidget(QFrame):
 
     def _open_in_explorer(self):
         if self.media_path and os.path.exists(self.media_path):
-            folder = os.path.dirname(self.media_path)
             if sys.platform == "win32":
                 subprocess.Popen(["explorer", "/select,", os.path.normpath(self.media_path)])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", "-R", os.path.abspath(self.media_path)])
             else:
+                folder = os.path.dirname(self.media_path)
                 QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
 

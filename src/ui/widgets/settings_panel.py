@@ -8,7 +8,12 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Signal
 
-from ...core.model_manager import SUPPORTED_LANGUAGES, is_model_downloaded
+from ...core.model_manager import (
+    SUPPORTED_LANGUAGES,
+    is_model_downloaded,
+    get_recommended_settings,
+    get_system_memory_info
+)
 from .model_download_dialog import ModelDownloadDialog
 
 
@@ -22,6 +27,7 @@ class SettingsPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.rec_settings = get_recommended_settings()
         self._init_ui()
         self.sync_model_state()
 
@@ -122,18 +128,61 @@ class SettingsPanel(QWidget):
         col_prompt.addWidget(self.txt_prompt)
         adv_layout.addLayout(col_prompt)
 
+        # Row 3: Inference Batch Size & Concurrency
+        row3 = QHBoxLayout()
+        row3.setSpacing(10)
+
+        # Inference Batch Size
+        col_batch = QVBoxLayout()
+        lbl_batch = QLabel("Inference Batch Size")
+        lbl_batch.setStyleSheet("font-size: 11px; font-weight: 500;")
+        self.cb_batch_size = QComboBox()
+        rec_bs = self.rec_settings["recommended_batch_size"]
+        self.cb_batch_size.addItem(f"Auto (Recommended: {rec_bs} Chunks)", rec_bs)
+        self.cb_batch_size.addItem("1 Chunk (Lowest Memory / Safety Mode)", 1)
+        self.cb_batch_size.addItem("2 Chunks (8GB Mac Unified / 4GB VRAM / 8GB RAM)", 2)
+        self.cb_batch_size.addItem("4 Chunks (12-16GB Mac Unified / 6GB VRAM / 16GB RAM)", 4)
+        self.cb_batch_size.addItem("8 Chunks (16-24GB Mac Unified / 8GB VRAM / 16-32GB RAM)", 8)
+        self.cb_batch_size.addItem("16 Chunks (24-32GB Mac Unified / 12-16GB VRAM / 32GB RAM)", 16)
+        self.cb_batch_size.addItem("32 Chunks (32-64GB Mac Unified / 16-24GB VRAM / 64GB RAM)", 32)
+        self.cb_batch_size.addItem("64 Chunks (64GB+ Mac Unified / 24GB+ VRAM / 64GB+ RAM)", 64)
+        self.cb_batch_size.setCurrentIndex(0)
+        self.cb_batch_size.setToolTip(
+            "Batch size determines how many audio chunks are processed simultaneously.\n"
+            "• Dedicated GPU VRAM: 4GB -> 2-4 chunks, 8GB -> 8 chunks, 12-16GB -> 16 chunks, 24GB -> 32-64 chunks\n"
+            "• Apple Silicon Unified Memory: 8GB -> 2 chunks, 16GB -> 8 chunks, 24-32GB -> 16 chunks, 64GB+ -> 32-64 chunks\n"
+            "• CPU Mode: Uses physical system RAM"
+        )
+        self.cb_batch_size.currentIndexChanged.connect(self.sig_settings_changed)
+        col_batch.addWidget(lbl_batch)
+        col_batch.addWidget(self.cb_batch_size)
+        row3.addLayout(col_batch)
+
         # Concurrency
         col_conc = QVBoxLayout()
         lbl_conc = QLabel("Parallel Worker Threads")
         lbl_conc.setStyleSheet("font-size: 11px; font-weight: 500;")
         self.cb_concurrency = QComboBox()
-        self.cb_concurrency.addItem("1 Worker (Sequential / Low Memory)", 1)
-        self.cb_concurrency.addItem("2 Workers (Recommended)", 2)
+        self.cb_concurrency.addItem("1 Worker (Low Memory / Apple Silicon)", 1)
+        self.cb_concurrency.addItem("2 Workers (Standard)", 2)
         self.cb_concurrency.addItem("4 Workers (High Performance)", 4)
-        self.cb_concurrency.setCurrentIndex(1)  # Default 2
+        
+        # Preselect recommended concurrency
+        rec_conc = self.rec_settings["recommended_concurrency"]
+        conc_idx = 0 if rec_conc == 1 else (1 if rec_conc == 2 else 2)
+        self.cb_concurrency.setCurrentIndex(conc_idx)
+        self.cb_concurrency.setToolTip("Number of video/audio files transcribed concurrently in the queue")
+        self.cb_concurrency.currentIndexChanged.connect(self.sig_settings_changed)
         col_conc.addWidget(lbl_conc)
         col_conc.addWidget(self.cb_concurrency)
-        adv_layout.addLayout(col_conc)
+        row3.addLayout(col_conc)
+
+        adv_layout.addLayout(row3)
+
+        # Hardware Info Note
+        lbl_mem_info = QLabel(f"Hardware Profile: {self.rec_settings['memory_label']}")
+        lbl_mem_info.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 500;")
+        adv_layout.addWidget(lbl_mem_info)
 
         # Utility Buttons Row
         btn_row = QHBoxLayout()
@@ -211,50 +260,14 @@ class SettingsPanel(QWidget):
 
     def get_settings(self) -> Dict[str, Any]:
         """Returns the dictionary of currently configured parameters."""
+        raw_bs = self.cb_batch_size.currentData()
+        batch_size = int(raw_bs if raw_bs is not None else self.rec_settings["recommended_batch_size"])
         return {
             "language": self.cb_language.currentData() or None,
             "auto_save": self.chk_autosave.isChecked(),
             "max_segment_length": self.spin_max_cue.value(),
             "silence_thresh_db": float(self.spin_silence.value()),
             "prompt": self.txt_prompt.text().strip() or None,
-            "concurrency": self.cb_concurrency.currentData() or 2
-        }
-
-
-    def _open_model_dialog(self):
-        dlg = ModelDownloadDialog(self)
-        dlg.exec()
-
-    def _purge_temp_cache(self):
-        temp_dir = tempfile.gettempdir()
-        deleted = 0
-        freed = 0
-        try:
-            for f in os.listdir(temp_dir):
-                if f.endswith(".extracted.wav") or "_cue_" in f or (f.startswith("tmp") and f.endswith(".wav")):
-                    full_p = os.path.join(temp_dir, f)
-                    try:
-                        sz = os.path.getsize(full_p)
-                        os.unlink(full_p)
-                        deleted += 1
-                        freed += sz
-                    except Exception:
-                        pass
-            QMessageBox.information(
-                self,
-                "Cache Cleared",
-                f"Deleted {deleted} temporary audio files.\nFreed {freed / (1024 * 1024):.2f} MB."
-            )
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to clean temp files: {e}")
-
-    def get_settings(self) -> Dict[str, Any]:
-        """Returns the dictionary of currently configured parameters."""
-        return {
-            "language": self.cb_language.currentData() or None,
-            "auto_save": self.chk_autosave.isChecked(),
-            "max_segment_length": self.spin_max_cue.value(),
-            "silence_thresh_db": float(self.spin_silence.value()),
-            "prompt": self.txt_prompt.text().strip() or None,
+            "batch_size": batch_size,
             "concurrency": self.cb_concurrency.currentData() or 2
         }

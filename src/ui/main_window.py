@@ -369,6 +369,7 @@ class MainWindow(QMainWindow):
 
         self.queue_mgr.sig_item_completed.connect(self._on_item_completed)
         self.queue_mgr.sig_item_status_changed.connect(self._on_item_status_updated)
+        self.queue_mgr.sig_item_error.connect(self._on_item_error)
 
         # Raw views modifications sync
         self.srt_view.sig_raw_text_modified.connect(self._on_cues_modified_from_raw)
@@ -404,6 +405,19 @@ class MainWindow(QMainWindow):
     def _on_item_status_updated(self, file_id: str, status: str, stage_msg: str, progress: float):
         if self.active_file_id == file_id and status != "completed":
             self.lbl_meta_time.setText("Status: " + stage_msg)
+
+    def _on_item_error(self, file_id: str, error_msg: str):
+        if self.active_file_id == file_id:
+            self.lbl_meta_time.setText(f"Status: Error - {error_msg}")
+        if "out of memory" in error_msg.lower() or "insufficient memory" in error_msg.lower() or "command buffer" in error_msg.lower():
+            QMessageBox.warning(
+                self,
+                "GPU Out of Memory (MPS)",
+                f"Transcription encountered GPU memory exhaustion:\n\n{error_msg}\n\n"
+                "Recommendations:\n"
+                "1. Set 'Parallel Worker Threads' to 1 in Settings.\n"
+                "2. SubtitleGo will automatically retry single items or fall back to CPU."
+            )
 
     def _on_item_selected(self, file_id: str):
         if file_id not in self.queue_mgr.items:

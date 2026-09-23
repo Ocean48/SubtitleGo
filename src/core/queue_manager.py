@@ -233,6 +233,7 @@ class QueueManager(QObject):
             prompt=self._current_settings.get("prompt"),
             max_segment_length=float(self._current_settings.get("max_segment_length", 4.5)),
             silence_thresh_db=float(self._current_settings.get("silence_thresh_db", -36.0)),
+            batch_size=self._current_settings.get("batch_size"),
         )
 
         worker.sig_progress.connect(self._on_worker_progress)

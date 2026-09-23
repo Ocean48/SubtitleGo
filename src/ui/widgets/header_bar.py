@@ -164,8 +164,17 @@ class HeaderBar(QFrame):
             info = mgr.get_hardware_status()
             is_loaded = info.get("model_loaded", False)
 
-            if info["cuda_available"]:
-                gpu_desc = f"GPU: {info['gpu_name']} {info['vram_gb']}GB" if info.get('vram_gb') else f"GPU: {info['gpu_name']}"
+            if info.get("cuda_available"):
+                gpu_desc = f"GPU: {info['gpu_name']} {info['vram_gb']:.1f}GB" if info.get('vram_gb') else f"GPU: {info['gpu_name']}"
+                if is_loaded:
+                    self.lbl_status.setText(f"[Active | {gpu_desc}]")
+                    self.lbl_status.setProperty("class", "gpu")
+                else:
+                    self.lbl_status.setText(f"[Standby | {gpu_desc}]")
+                    self.lbl_status.setProperty("class", "")
+            elif info.get("mps_available"):
+                ram_str = f" ({info['total_ram_gb']:.0f} GB Unified RAM)" if info.get('total_ram_gb') else ""
+                gpu_desc = f"Apple Silicon GPU{ram_str}"
                 if is_loaded:
                     self.lbl_status.setText(f"[Active | {gpu_desc}]")
                     self.lbl_status.setProperty("class", "gpu")
@@ -173,11 +182,12 @@ class HeaderBar(QFrame):
                     self.lbl_status.setText(f"[Standby | {gpu_desc}]")
                     self.lbl_status.setProperty("class", "")
             else:
+                ram_str = f" ({info['total_ram_gb']:.0f} GB RAM)" if info.get('total_ram_gb') else ""
                 if is_loaded:
-                    self.lbl_status.setText("[Active | CPU Mode]")
+                    self.lbl_status.setText(f"[Active | CPU Mode{ram_str}]")
                     self.lbl_status.setProperty("class", "cpu")
                 else:
-                    self.lbl_status.setText("[Standby | CPU Mode]")
+                    self.lbl_status.setText(f"[Standby | CPU Mode{ram_str}]")
                     self.lbl_status.setProperty("class", "")
         except Exception:
             self.lbl_status.setText("[Offline / Initializing]")

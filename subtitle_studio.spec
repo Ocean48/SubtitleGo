@@ -110,3 +110,16 @@ coll = COLLECT(
     upx_exclude=[],
     name='SubtitleStudio',
 )
+
+if sys.platform == 'darwin':
+    app = BUNDLE(
+        coll,
+        name='SubtitleStudio.app',
+        icon=None,
+        bundle_identifier='com.subtitlego.app',
+        info_plist={
+            'CFBundleShortVersionString': '1.0.0',
+            'CFBundleVersion': '1.0.0',
+            'NSHighResolutionCapable': 'True',
+        },
+    )

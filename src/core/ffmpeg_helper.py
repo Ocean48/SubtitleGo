@@ -19,7 +19,8 @@ def get_ffmpeg_path() -> str:
     1. PyInstaller MEIPASS bundled directory
     2. Executable adjacent bin/ or root
     3. Project bin/ directory
-    4. System PATH
+    4. Common system installation paths (/opt/homebrew/bin, /usr/local/bin)
+    5. System PATH
     """
     candidates = []
 
@@ -28,12 +29,20 @@ def get_ffmpeg_path() -> str:
         meipass = getattr(sys, "_MEIPASS")
         candidates.append(os.path.join(meipass, "bin", "ffmpeg.exe"))
         candidates.append(os.path.join(meipass, "ffmpeg.exe"))
+        candidates.append(os.path.join(meipass, "bin", "ffmpeg"))
+        candidates.append(os.path.join(meipass, "ffmpeg"))
 
     base_dir = get_base_dir()
     candidates.append(os.path.join(base_dir, "bin", "ffmpeg.exe"))
     candidates.append(os.path.join(base_dir, "ffmpeg.exe"))
     candidates.append(os.path.join(base_dir, "bin", "ffmpeg"))
     candidates.append(os.path.join(base_dir, "ffmpeg"))
+
+    # macOS GUI app fallback paths (when PATH is not inherited from terminal)
+    if sys.platform == "darwin":
+        candidates.append("/opt/homebrew/bin/ffmpeg")
+        candidates.append("/usr/local/bin/ffmpeg")
+        candidates.append("/opt/local/bin/ffmpeg")
 
     for c in candidates:
         if os.path.isfile(c) and os.access(c, os.X_OK if os.name != "nt" else os.F_OK):
@@ -56,12 +65,20 @@ def get_ffprobe_path() -> str:
         meipass = getattr(sys, "_MEIPASS")
         candidates.append(os.path.join(meipass, "bin", "ffprobe.exe"))
         candidates.append(os.path.join(meipass, "ffprobe.exe"))
+        candidates.append(os.path.join(meipass, "bin", "ffprobe"))
+        candidates.append(os.path.join(meipass, "ffprobe"))
 
     base_dir = get_base_dir()
     candidates.append(os.path.join(base_dir, "bin", "ffprobe.exe"))
     candidates.append(os.path.join(base_dir, "ffprobe.exe"))
     candidates.append(os.path.join(base_dir, "bin", "ffprobe"))
     candidates.append(os.path.join(base_dir, "ffprobe"))
+
+    # macOS GUI app fallback paths
+    if sys.platform == "darwin":
+        candidates.append("/opt/homebrew/bin/ffprobe")
+        candidates.append("/usr/local/bin/ffprobe")
+        candidates.append("/opt/local/bin/ffprobe")
 
     for c in candidates:
         if os.path.isfile(c) and os.access(c, os.X_OK if os.name != "nt" else os.F_OK):

@@ -46,9 +46,9 @@ No Python installation or command-line setup is required to run the pre-built ve
 
 | Component | Tested / Supported | Notes |
 | :--- | :--- | :--- |
-| **Operating System** | **Windows 11 (64-bit)** (Tested)<br>Windows 10 (64-bit) | Fully tested and validated on Windows 11. |
-| **GPU / Acceleration** | **NVIDIA RTX 50-Series (Blackwell architecture)** (Tested)<br>NVIDIA RTX 40 / 30 / 20 Series | High-speed FP16/BF16 tensor acceleration via CUDA. |
-| **CPU Fallback** | Intel / AMD x64 processors | Automatic CPU execution fallback when no compatible CUDA GPU is detected. |
+| **Operating System** | **Windows 11 (64-bit)** (Tested)<br>**macOS Sonoma / Sequoia (Apple Silicon)** (Tested)<br>Windows 10 (64-bit)<br>macOS (Intel x86_64) | Fully tested and validated across Windows and macOS (Apple Silicon). |
+| **GPU / Acceleration** | **NVIDIA RTX 50-Series (Blackwell architecture)** (Tested)<br>**Apple Silicon Metal / MPS (M1/M2/M3/M4 Series)** (Tested)<br>NVIDIA RTX 40 / 30 / 20 Series | High-speed FP16/BF16 tensor acceleration via CUDA (NVIDIA) and Metal Performance Shaders (Apple Silicon). |
+| **CPU Fallback** | Intel / AMD x64 processors<br>Apple Silicon CPU fallback | Automatic CPU execution fallback when no compatible GPU/MPS device is detected or during low-memory conditions. |
 
 ---
 

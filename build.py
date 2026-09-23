@@ -75,6 +75,8 @@ def build_and_package(
     # 2. Copy FFmpeg binaries into dist directory if present
     local_bin = os.path.join(root_dir, "bin")
     target_bin = os.path.join(dist_app_dir, "bin")
+    target_app_bundle = os.path.join(root_dir, "dist", "SubtitleStudio.app")
+
     if os.path.exists(local_bin):
         print(f"Bundling bin directory to {target_bin}...")
         os.makedirs(target_bin, exist_ok=True)
@@ -83,6 +85,19 @@ def build_and_package(
             d = os.path.join(target_bin, item)
             if os.path.isfile(s):
                 shutil.copy2(s, d)
+                if sys.platform != "win32":
+                    os.chmod(d, 0o755)
+
+        # Also copy to macOS .app bundle if present
+        if os.path.exists(target_app_bundle):
+            app_macos_bin = os.path.join(target_app_bundle, "Contents", "MacOS", "bin")
+            os.makedirs(app_macos_bin, exist_ok=True)
+            for item in os.listdir(local_bin):
+                s = os.path.join(local_bin, item)
+                d = os.path.join(app_macos_bin, item)
+                if os.path.isfile(s):
+                    shutil.copy2(s, d)
+                    os.chmod(d, 0o755)
         print("FFmpeg binaries bundled.")
 
     # 3. Handle model weights
@@ -95,6 +110,9 @@ def build_and_package(
         if os.path.exists(local_models) and not os.path.exists(target_qwen_models):
             print(f"Copying local Qwen3-ASR weights to {target_qwen_models}...")
             shutil.copytree(local_models, target_qwen_models, dirs_exist_ok=True)
+            if os.path.exists(target_app_bundle):
+                app_models = os.path.join(target_app_bundle, "Contents", "MacOS", "models", "Qwen3-ASR-1.7B")
+                shutil.copytree(local_models, app_models, dirs_exist_ok=True)
             print("Model weights copied.")
     else:
         print("Standard mode: Model weights externalized (downloadable on first run).")
@@ -106,20 +124,28 @@ def build_and_package(
         release_zip_path = os.path.join(root_dir, "dist", release_zip_name)
         print(f"\nCreating release archive: {release_zip_path} ...")
 
+        # Select items to archive
+        items_to_zip = [dist_app_dir]
+        if sys.platform == "darwin" and os.path.exists(target_app_bundle):
+            items_to_zip.append(target_app_bundle)
+
         with zipfile.ZipFile(release_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-            for root, _, files in os.walk(dist_app_dir):
-                for file in files:
-                    full_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(full_path, os.path.join(root_dir, "dist"))
-                    zipf.write(full_path, rel_path)
+            for item_dir in items_to_zip:
+                for root, _, files in os.walk(item_dir):
+                    for file in files:
+                        full_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(full_path, os.path.join(root_dir, "dist"))
+                        zipf.write(full_path, rel_path)
 
         zip_size_mb = os.path.getsize(release_zip_path) / (1024 * 1024)
         print("\nPackage generated successfully!")
         print(f"Archive:    {release_zip_path} ({zip_size_mb:.2f} MB)")
         print(f"App Folder: {dist_app_dir}")
-        exe_path = os.path.join(dist_app_dir, "SubtitleStudio.exe")
+        exe_path = os.path.join(dist_app_dir, "SubtitleStudio.exe" if sys.platform == "win32" else "SubtitleStudio")
         if os.path.exists(exe_path):
             print(f"Executable: {exe_path}")
+        if os.path.exists(target_app_bundle):
+            print(f"macOS App:  {target_app_bundle}")
     else:
         print("\nSkipping ZIP package generation (--no-zip specified).")
         print(f"App Folder: {dist_app_dir}")
