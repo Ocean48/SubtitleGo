@@ -46,8 +46,8 @@ No Python installation or command-line setup is required to run the pre-built ve
 
 | Component | Tested / Supported | Notes |
 | :--- | :--- | :--- |
-| **Operating System** | **Windows 11 (64-bit)** (Tested)<br>**macOS Sonoma / Sequoia (Apple Silicon)** (Tested)<br>Windows 10 (64-bit)<br>macOS (Intel x86_64) | Fully tested and validated across Windows and macOS (Apple Silicon). |
-| **GPU / Acceleration** | **NVIDIA RTX 50-Series (Blackwell architecture)** (Tested)<br>**Apple Silicon Metal / MPS (M1/M2/M3/M4 Series)** (Tested)<br>NVIDIA RTX 40 / 30 / 20 Series | High-speed FP16/BF16 tensor acceleration via CUDA (NVIDIA) and Metal Performance Shaders (Apple Silicon). |
+| **Operating System** | **Linux (Ubuntu, Debian, Fedora, Arch)** (Tested)<br>**Windows 11 (64-bit)** (Tested)<br>**macOS Sonoma / Sequoia (Apple Silicon)** (Tested)<br>Windows 10 (64-bit)<br>macOS (Intel x86_64) | Fully tested and validated across Linux, Windows, and macOS. |
+| **GPU / Acceleration** | **NVIDIA RTX 50-Series (Blackwell architecture)** (Tested)<br>**Apple Silicon Metal / MPS (M1/M2/M3/M4 Series)** (Tested)<br>NVIDIA RTX 40 / 30 / 20 Series | High-speed FP16/BF16 tensor acceleration via CUDA (Linux/Windows) and Metal Performance Shaders (Apple Silicon). |
 | **CPU Fallback** | Intel / AMD x64 processors<br>Apple Silicon CPU fallback | Automatic CPU execution fallback when no compatible GPU/MPS device is detected or during low-memory conditions. |
 
 ---
@@ -55,9 +55,34 @@ No Python installation or command-line setup is required to run the pre-built ve
 ## Running from Source
 
 ### Prerequisites
-- **Operating System**: Windows 10/11 (64-bit) (Tested on Windows 11)
+- **Operating System**: Linux (Ubuntu 20.04+, Debian 11+, Fedora 38+, Arch), Windows 10/11 (64-bit), or macOS 12+
 - **Python**: 3.10, 3.11, or 3.12 (64-bit)
 - **GPU (Recommended)**: NVIDIA GPU with CUDA 11.8+ or 12.1+ (Tested with NVIDIA RTX 50-Series; CPU mode supported)
+
+### Linux System Prerequisites
+
+On Linux distributions, ensure the required GUI, OpenGL, GStreamer multimedia plugins, and build utilities (such as `binutils` for PyInstaller packaging) are installed:
+
+- **Ubuntu / Debian / Linux Mint**:
+  ```bash
+  sudo apt update
+  sudo apt install -y binutils ffmpeg libsndfile1 libgl1 libegl1 libxkbcommon-x11-0 \
+                      libdbus-1-3 gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+                      gstreamer1.0-plugins-bad gstreamer1.0-libav libgstreamer1.0-0
+  ```
+
+- **Fedora / RHEL**:
+  ```bash
+  sudo dnf install -y binutils ffmpeg libsndfile mesa-libGL mesa-libEGL libxkbcommon-x11 \
+                      gstreamer1-plugins-base gstreamer1-plugins-good \
+                      gstreamer1-plugins-bad-free gstreamer1-plugin-libav
+  ```
+
+- **Arch Linux**:
+  ```bash
+  sudo pacman -S binutils ffmpeg libsndfile libxkbcommon xcb-util-wm xcb-util-image \
+                 gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav
+  ```
 
 ### Step-by-Step Setup
 
@@ -68,10 +93,16 @@ No Python installation or command-line setup is required to run the pre-built ve
    ```
 
 2. **Create and activate a virtual environment**:
-   ```powershell
-   python -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   ```
+   - **Linux / macOS**:
+     ```bash
+     python3 -m venv .venv
+     source .venv/bin/activate
+     ```
+   - **Windows (PowerShell)**:
+     ```powershell
+     python -m venv .venv
+     .\.venv\Scripts\Activate.ps1
+     ```
 
 3. **Install PyTorch with CUDA support (or CPU)**:
    ```bash
@@ -91,7 +122,7 @@ No Python installation or command-line setup is required to run the pre-built ve
    ```
 
 5. **Download FFmpeg binaries**:
-   Run the automated downloader to place static `ffmpeg.exe` and `ffprobe.exe` into the `bin/` folder:
+   Run the automated downloader to place static `ffmpeg` and `ffprobe` into the `bin/` folder:
    ```bash
    python download_ffmpeg.py
    ```
@@ -118,15 +149,19 @@ python -c "from huggingface_hub import snapshot_download; snapshot_download(repo
 
 ---
 
-## Building the Standalone Executable (.exe)
+## Building the Standalone Executable
 
-To build the standalone Windows executable and create the release ZIP package:
+To build the standalone executable and create the release ZIP package:
 
 1. **Activate the virtual environment**:
-   Make sure you have completed the environment setup in [Running from Source](#running-from-source) and activated the `.venv`:
-   ```powershell
-   .\.venv\Scripts\Activate.ps1
-   ```
+   - **Linux / macOS**:
+     ```bash
+     source .venv/bin/activate
+     ```
+   - **Windows (PowerShell)**:
+     ```powershell
+     .\.venv\Scripts\Activate.ps1
+     ```
 
 2. **Ensure all dependencies and PyInstaller are installed**:
    ```bash
@@ -152,8 +187,8 @@ To build the standalone Windows executable and create the release ZIP package:
 
 5. **Locate build outputs**:
    The script will package and output:
-   - **`dist/SubtitleStudio/`**: Portable standalone application folder containing `SubtitleStudio.exe`, bundled FFmpeg binaries, and dependencies.
-   - **`dist/SubtitleGo-v1.0.0-windows-x64.zip`**: Compressed release archive (~200MB) ready for distribution via GitHub Releases.
+   - **`dist/SubtitleStudio/`**: Portable standalone application folder containing the binary executable (`SubtitleStudio` on Linux/macOS or `SubtitleStudio.exe` on Windows), bundled FFmpeg binaries, and dependencies.
+   - **`dist/SubtitleGo-v1.0.0-<platform>.zip`**: Compressed release archive ready for distribution via GitHub Releases.
 
 ---
 

@@ -4,6 +4,19 @@ import gc
 import threading
 from typing import List, Tuple, Optional, Dict, Any, Callable
 
+# Safely import heavy AI runtime libraries at module load time on the main thread
+# to avoid C-extension dynamic loading race conditions in background QThreads.
+try:
+    import torch
+    import torchaudio
+    import transformers
+    from qwen_asr import Qwen3ASRModel
+except ImportError:
+    torch = None
+    torchaudio = None
+    transformers = None
+    Qwen3ASRModel = None
+
 SUPPORTED_LANGUAGES = [
     "Auto Detect", "Chinese", "English", "Cantonese", "Japanese", "Korean", 
     "Spanish", "French", "German", "Russian", "Arabic", "Portuguese",

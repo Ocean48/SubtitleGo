@@ -16,7 +16,24 @@ from src.core.model_manager import is_model_downloaded
 from src.ui.widgets.model_download_dialog import ModelDownloadDialog
 
 
+def _warmup_ai_runtime():
+    """
+    Initializes PyTorch, Transformers, and Qwen-ASR runtime on the main thread.
+    Prevents C-extension dynamic loader initialization race conditions and segmentation faults
+    when background QThreads load models or perform speech recognition inference.
+    """
+    try:
+        import torch
+        import transformers
+        from qwen_asr import Qwen3ASRModel
+    except Exception as e:
+        print(f"AI runtime warmup notice: {e}")
+
+
 def main():
+    # Warm up AI runtime on main thread
+    _warmup_ai_runtime()
+
     # Enable high DPI scaling
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
