@@ -16,6 +16,7 @@ class QueueManager(QObject):
     sig_item_completed = Signal(str, dict)              # file_id, result_dict
     sig_item_error = Signal(str, str)                   # file_id, error_msg
     sig_batch_finished = Signal()                       # All items completed
+    sig_batch_stopped = Signal()                        # Batch processing stopped
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -59,6 +60,8 @@ class QueueManager(QObject):
 
         if added_ids:
             self.sig_queue_updated.emit()
+            if self._is_processing_batch:
+                self._schedule_next()
         return added_ids
 
     def remove_item(self, file_id: str):
@@ -76,14 +79,62 @@ class QueueManager(QObject):
             if self._is_processing_batch:
                 self._schedule_next()
 
+    def stop_item(self, file_id: str):
+        """Cancels a single running worker without removing the item from the queue."""
+        if file_id in self.active_workers:
+            worker = self.active_workers.pop(file_id)
+            worker.cancel()
+            worker.quit()
+            if worker.isRunning():
+                worker.wait(2000)
+            worker.deleteLater()
+
+        if file_id in self.items:
+            self.items[file_id]["status"] = "cancelled"
+            self.items[file_id]["stage_msg"] = "Stopped"
+            self.sig_item_status_changed.emit(file_id, "cancelled", "Stopped", self.items[file_id].get("progress", 0.0))
+            self.sig_queue_updated.emit()
+
+        if self._is_processing_batch:
+            self._schedule_next()
+
+    def move_item(self, file_id: str, direction: int):
+        """Moves an item up (-1) or down (+1) in the queue order."""
+        keys = list(self.items.keys())
+        if file_id not in keys:
+            return
+        idx = keys.index(file_id)
+        target_idx = idx + direction
+        if target_idx < 0 or target_idx >= len(keys):
+            return
+        keys[idx], keys[target_idx] = keys[target_idx], keys[idx]
+        self.items = {k: self.items[k] for k in keys}
+        self.sig_queue_updated.emit()
+
     def clear_all(self):
         """Cancels all active tasks and clears queue."""
         self.stop_all()
         self.items.clear()
         self.sig_queue_updated.emit()
 
+    def clear_completed(self):
+        """Removes all completed items from the queue."""
+        to_remove = [fid for fid, it in self.items.items() if it["status"] == "completed"]
+        for fid in to_remove:
+            del self.items[fid]
+        if to_remove:
+            self.sig_queue_updated.emit()
+
+    def clear_failed(self):
+        """Removes all error or cancelled items from the queue."""
+        to_remove = [fid for fid, it in self.items.items() if it["status"] in ["error", "cancelled"]]
+        for fid in to_remove:
+            del self.items[fid]
+        if to_remove:
+            self.sig_queue_updated.emit()
+
     def stop_all(self):
-        """Aborts all active workers."""
+        """Aborts all active workers and resets in-flight items."""
         self._is_processing_batch = False
         workers_to_stop = list(self.active_workers.values())
         self.active_workers.clear()
@@ -95,12 +146,34 @@ class QueueManager(QObject):
                 worker.wait(3000)
             worker.deleteLater()
 
+        for item in self.items.values():
+            if item["status"] == "processing":
+                item["status"] = "cancelled"
+                item["stage_msg"] = "Stopped"
+                self.sig_item_status_changed.emit(item["file_id"], "cancelled", "Stopped", item.get("progress", 0.0))
+
+        self.sig_queue_updated.emit()
+        self.sig_batch_stopped.emit()
+
+    def is_processing(self) -> bool:
+        """Returns True if a batch is active or workers are running."""
+        return self._is_processing_batch or bool(self.active_workers)
+
     def start_batch(self, settings: Dict[str, Any]):
-        """Starts batch processing for all queued or errored items."""
+        """Starts batch processing for all queued, cancelled, or errored items."""
         self._current_settings = settings
         self.concurrency = int(settings.get("concurrency", 2))
         self.auto_save = bool(settings.get("auto_save", True))
         self._is_processing_batch = True
+
+        for item in self.items.values():
+            if item["status"] in ["error", "cancelled"]:
+                item["status"] = "queued"
+                item["stage_msg"] = "Queued"
+                item["progress"] = 0.0
+                item["error"] = None
+                self.sig_item_status_changed.emit(item["file_id"], "queued", "Queued", 0.0)
+
         self._schedule_next()
 
     def retry_item(self, file_id: str, settings: Dict[str, Any]):
@@ -138,9 +211,9 @@ class QueueManager(QObject):
             self._start_worker(next_id)
             running_count += 1
 
-        # Check if all items finished
+        # Check if all items finished or aborted
         if not self.active_workers:
-            all_done = all(item["status"] in ["completed", "error"] for item in self.items.values())
+            all_done = all(item["status"] in ["completed", "error", "cancelled"] for item in self.items.values())
             if all_done and self._is_processing_batch:
                 self._is_processing_batch = False
                 self.sig_batch_finished.emit()
@@ -212,7 +285,7 @@ class QueueManager(QObject):
         worker.deleteLater()
 
         if not self.active_workers:
-            all_done = all(item["status"] in ["completed", "error"] for item in self.items.values())
+            all_done = all(item["status"] in ["completed", "error", "cancelled"] for item in self.items.values())
             if all_done and self._is_processing_batch:
                 self._is_processing_batch = False
                 self.sig_batch_finished.emit()

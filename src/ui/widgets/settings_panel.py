@@ -3,7 +3,8 @@ import tempfile
 from typing import Dict, Any
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QCheckBox,
-    QDoubleSpinBox, QSpinBox, QLineEdit, QPushButton, QGroupBox, QMessageBox
+    QDoubleSpinBox, QSpinBox, QLineEdit, QPushButton, QGroupBox, QMessageBox,
+    QFrame
 )
 from PySide6.QtCore import Signal
 
@@ -17,20 +18,29 @@ class SettingsPanel(QWidget):
     and subtitle pacing.
     """
     sig_settings_changed = Signal()
+    sig_toggle_model = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._init_ui()
+        self.sync_model_state()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(14)
+
+        # Primary Options Card
+        card_primary = QFrame()
+        card_primary.setProperty("class", "cardFrame")
+        cp_layout = QVBoxLayout(card_primary)
+        cp_layout.setContentsMargins(12, 12, 12, 12)
+        cp_layout.setSpacing(10)
 
         # Spoken Language Selection
         lbl_lang = QLabel("Spoken Language")
-        lbl_lang.setStyleSheet("font-weight: 600; color: #94a3b8; font-size: 12px;")
-        layout.addWidget(lbl_lang)
+        lbl_lang.setStyleSheet("font-weight: 600; font-size: 12px;")
+        cp_layout.addWidget(lbl_lang)
 
         self.cb_language = QComboBox()
         for lang in SUPPORTED_LANGUAGES:
@@ -39,44 +49,46 @@ class SettingsPanel(QWidget):
             else:
                 self.cb_language.addItem(lang, lang)
         self.cb_language.currentIndexChanged.connect(self.sig_settings_changed)
-        layout.addWidget(self.cb_language)
+        cp_layout.addWidget(self.cb_language)
 
         # Auto-save Checkbox
-        self.chk_autosave = QCheckBox("Auto-save .srt & .vtt to source video folder")
+        self.chk_autosave = QCheckBox("Auto-save .srt & .vtt to media directory")
         self.chk_autosave.setChecked(True)
-        self.chk_autosave.setStyleSheet("font-size: 12px; color: #f8fafc;")
+        self.chk_autosave.setStyleSheet("font-weight: 500; font-size: 12px;")
         self.chk_autosave.stateChanged.connect(self.sig_settings_changed)
-        layout.addWidget(self.chk_autosave)
+        cp_layout.addWidget(self.chk_autosave)
 
-        lbl_autosave_hint = QLabel("Automatically writes subtitle files next to media upon completion")
+        lbl_autosave_hint = QLabel("Automatically generates subtitle files alongside source media upon completion.")
         lbl_autosave_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-left: 24px;")
-        layout.addWidget(lbl_autosave_hint)
+        lbl_autosave_hint.setWordWrap(True)
+        cp_layout.addWidget(lbl_autosave_hint)
 
-        # Advanced Settings Group (Collapsible)
-        self.grp_advanced = QGroupBox("Advanced Pacing & Audio Settings")
+        layout.addWidget(card_primary)
+
+        # Advanced Settings Group
+        self.grp_advanced = QGroupBox("Pacing, Vocabulary & System Settings")
         self.grp_advanced.setCheckable(True)
-        self.grp_advanced.setChecked(False)
+        self.grp_advanced.setChecked(True)
 
         adv_main_layout = QVBoxLayout(self.grp_advanced)
-        adv_main_layout.setContentsMargins(10, 10, 10, 10)
-        adv_main_layout.setSpacing(8)
+        adv_main_layout.setContentsMargins(12, 12, 12, 12)
+        adv_main_layout.setSpacing(10)
 
-        # Advanced Content Container
         self.adv_content = QWidget()
         adv_layout = QVBoxLayout(self.adv_content)
         adv_layout.setContentsMargins(0, 0, 0, 0)
-        adv_layout.setSpacing(8)
+        adv_layout.setSpacing(10)
 
         # Row 1: Max Cue Duration & Pause Sensitivity
         row1 = QHBoxLayout()
-        row1.setSpacing(8)
+        row1.setSpacing(10)
         
         # Max Cue Duration
         col_cue = QVBoxLayout()
         lbl_cue = QLabel("Max Cue Duration (s)")
-        lbl_cue.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        lbl_cue.setStyleSheet("font-size: 11px; font-weight: 500;")
         self.spin_max_cue = QDoubleSpinBox()
-        self.spin_max_cue.setRange(2.0, 15.0)
+        self.spin_max_cue.setRange(1.5, 15.0)
         self.spin_max_cue.setSingleStep(0.5)
         self.spin_max_cue.setValue(4.5)
         self.spin_max_cue.setToolTip("Maximum duration for each subtitle cue before splitting (Standard: 3.5s - 4.5s)")
@@ -87,9 +99,9 @@ class SettingsPanel(QWidget):
         # Pause Sensitivity
         col_silence = QVBoxLayout()
         lbl_silence = QLabel("Pause Sensitivity (dB)")
-        lbl_silence.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        lbl_silence.setStyleSheet("font-size: 11px; font-weight: 500;")
         self.spin_silence = QSpinBox()
-        self.spin_silence.setRange(-50, -15)
+        self.spin_silence.setRange(-60, -10)
         self.spin_silence.setSingleStep(1)
         self.spin_silence.setValue(-36)
         self.spin_silence.setToolTip("Audio volume threshold for speech pause detection (Default: -36 dB)")
@@ -99,55 +111,115 @@ class SettingsPanel(QWidget):
 
         adv_layout.addLayout(row1)
 
-        # Row 2: Vocabulary / Hotwords & Concurrency
-        row2 = QHBoxLayout()
-        row2.setSpacing(8)
-
+        # Row 2: Vocabulary / Hotwords
         col_prompt = QVBoxLayout()
-        lbl_prompt = QLabel("Vocabulary / Hotwords")
-        lbl_prompt.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        lbl_prompt = QLabel("Domain Vocabulary / Hotwords")
+        lbl_prompt.setStyleSheet("font-size: 11px; font-weight: 500;")
         self.txt_prompt = QLineEdit()
-        self.txt_prompt.setPlaceholderText("Names, acronyms, terms")
-        self.txt_prompt.setToolTip("Keywords passed to speech recognition model to improve domain accuracy")
+        self.txt_prompt.setPlaceholderText("e.g. PySide6, CUDA, Qwen, specialized terms...")
+        self.txt_prompt.setToolTip("Context keywords passed to speech model to improve domain accuracy")
         col_prompt.addWidget(lbl_prompt)
         col_prompt.addWidget(self.txt_prompt)
-        row2.addLayout(col_prompt, stretch=1)
+        adv_layout.addLayout(col_prompt)
 
+        # Concurrency
         col_conc = QVBoxLayout()
-        lbl_conc = QLabel("Parallel Workers")
-        lbl_conc.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        lbl_conc = QLabel("Parallel Worker Threads")
+        lbl_conc.setStyleSheet("font-size: 11px; font-weight: 500;")
         self.cb_concurrency = QComboBox()
-        self.cb_concurrency.addItem("1 worker", 1)
-        self.cb_concurrency.addItem("2 parallel", 2)
-        self.cb_concurrency.addItem("4 parallel", 4)
+        self.cb_concurrency.addItem("1 Worker (Sequential / Low Memory)", 1)
+        self.cb_concurrency.addItem("2 Workers (Recommended)", 2)
+        self.cb_concurrency.addItem("4 Workers (High Performance)", 4)
         self.cb_concurrency.setCurrentIndex(1)  # Default 2
         col_conc.addWidget(lbl_conc)
         col_conc.addWidget(self.cb_concurrency)
-        row2.addLayout(col_conc)
+        adv_layout.addLayout(col_conc)
 
-        adv_layout.addLayout(row2)
-
-        # Utility Buttons
+        # Utility Buttons Row
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
+
+        self.btn_toggle_model = QPushButton("Start Qwen Model")
+        self.btn_toggle_model.setProperty("class", "btnPrimary")
+        self.btn_toggle_model.setToolTip("Start or end the Qwen3-ASR model in memory")
+        self.btn_toggle_model.clicked.connect(self.sig_toggle_model)
+        btn_row.addWidget(self.btn_toggle_model)
         
         self.btn_download_model = QPushButton("Model Weights...")
-        self.btn_download_model.setProperty("class", "btnOutline")
+        self.btn_download_model.setProperty("class", "btnSecondary")
+        self.btn_download_model.setToolTip("Download or verify local AI model weights")
         self.btn_download_model.clicked.connect(self._open_model_dialog)
         btn_row.addWidget(self.btn_download_model)
 
-        self.btn_purge_temp = QPushButton("Purge Temp Audio")
-        self.btn_purge_temp.setProperty("class", "btnOutline")
+        self.btn_purge_temp = QPushButton("Clear Temp Audio")
+        self.btn_purge_temp.setProperty("class", "btnSecondary")
+        self.btn_purge_temp.setToolTip("Delete temporary extracted WAV segments from disk")
         self.btn_purge_temp.clicked.connect(self._purge_temp_cache)
         btn_row.addWidget(self.btn_purge_temp)
 
         adv_layout.addLayout(btn_row)
 
         adv_main_layout.addWidget(self.adv_content)
-        self.adv_content.setVisible(False)
         self.grp_advanced.toggled.connect(self.adv_content.setVisible)
 
         layout.addWidget(self.grp_advanced)
+        layout.addStretch()
+
+    def sync_model_state(self):
+        """Synchronizes model button in settings with current model instance state."""
+        from ...core.model_manager import ModelManager
+        mgr = ModelManager.get_instance()
+        is_loaded = mgr.model is not None
+        if is_loaded:
+            self.btn_toggle_model.setText("End Qwen Model")
+            self.btn_toggle_model.setProperty("class", "btnDanger")
+            self.btn_toggle_model.setToolTip("Unload Qwen3-ASR model from memory to free VRAM/RAM")
+        else:
+            self.btn_toggle_model.setText("Start Qwen Model")
+            self.btn_toggle_model.setProperty("class", "btnPrimary")
+            self.btn_toggle_model.setToolTip("Load Qwen3-ASR model into GPU/CPU memory for instant speech recognition")
+
+        self.btn_toggle_model.style().unpolish(self.btn_toggle_model)
+        self.btn_toggle_model.style().polish(self.btn_toggle_model)
+
+    def _open_model_dialog(self):
+        dlg = ModelDownloadDialog(self)
+        dlg.exec()
+
+    def _purge_temp_cache(self):
+        temp_dir = tempfile.gettempdir()
+        deleted = 0
+        freed = 0
+        try:
+            for f in os.listdir(temp_dir):
+                if f.endswith(".extracted.wav") or "_cue_" in f or (f.startswith("tmp") and f.endswith(".wav")):
+                    full_p = os.path.join(temp_dir, f)
+                    try:
+                        sz = os.path.getsize(full_p)
+                        os.unlink(full_p)
+                        deleted += 1
+                        freed += sz
+                    except Exception:
+                        pass
+            QMessageBox.information(
+                self,
+                "Cache Cleared",
+                f"Deleted {deleted} temporary audio files.\nFreed {freed / (1024 * 1024):.2f} MB."
+            )
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to clean temp files: {e}")
+
+    def get_settings(self) -> Dict[str, Any]:
+        """Returns the dictionary of currently configured parameters."""
+        return {
+            "language": self.cb_language.currentData() or None,
+            "auto_save": self.chk_autosave.isChecked(),
+            "max_segment_length": self.spin_max_cue.value(),
+            "silence_thresh_db": float(self.spin_silence.value()),
+            "prompt": self.txt_prompt.text().strip() or None,
+            "concurrency": self.cb_concurrency.currentData() or 2
+        }
+
 
     def _open_model_dialog(self):
         dlg = ModelDownloadDialog(self)

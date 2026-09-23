@@ -7,20 +7,20 @@ from PySide6.QtCore import Signal, QTimer, Qt
 from PySide6.QtGui import QFont
 
 from ...core.subtitle_formatter import (
-    build_srt_content, build_vtt_content,
+    build_srt_content, build_vtt_content, build_txt_content,
     parse_srt_content, parse_vtt_content
 )
 
 
 class RawSubtitleView(QWidget):
     """
-    Inspector view displaying raw SRT or WebVTT content with copy and edit capabilities.
+    Inspector view displaying raw SRT, WebVTT, or transcript content with copy and edit capabilities.
     """
     sig_raw_text_modified = Signal(list)  # Emits parsed cues
 
     def __init__(self, mode: str = "srt", parent=None):
         super().__init__(parent)
-        self.mode = mode.lower()  # "srt" or "vtt"
+        self.mode = mode.lower()  # "srt", "vtt", or "txt"
         self._is_programmatic_update = False
         self._init_ui()
 
@@ -33,13 +33,15 @@ class RawSubtitleView(QWidget):
         header = QHBoxLayout()
         header.setSpacing(8)
 
-        lbl_title = QLabel(f"Raw {self.mode.upper()} Content")
+        title_map = {"srt": "Formatted SRT", "vtt": "Formatted WebVTT", "txt": "Plain Transcript"}
+        lbl_title = QLabel(title_map.get(self.mode, f"Raw {self.mode.upper()} Content"))
         lbl_title.setStyleSheet("font-size: 11px; color: #94a3b8; font-weight: 600;")
         header.addWidget(lbl_title)
 
         header.addStretch()
 
-        self.btn_copy = QPushButton(f"Copy {self.mode.upper()}")
+        btn_label = f"Copy {self.mode.upper()}" if self.mode != "txt" else "Copy Transcript"
+        self.btn_copy = QPushButton(btn_label)
         self.btn_copy.setProperty("class", "btnOutline")
         self.btn_copy.setStyleSheet("font-size: 11px; padding: 3px 10px;")
         self.btn_copy.clicked.connect(self._copy_to_clipboard)
@@ -61,6 +63,8 @@ class RawSubtitleView(QWidget):
         self._is_programmatic_update = True
         if self.mode == "srt":
             content = build_srt_content(cues)
+        elif self.mode == "txt":
+            content = build_txt_content(cues)
         else:
             content = build_vtt_content(cues)
         self.editor.setPlainText(content)
@@ -74,7 +78,7 @@ class RawSubtitleView(QWidget):
         if txt:
             QApplication.clipboard().setText(txt)
             orig_text = self.btn_copy.text()
-            self.btn_copy.setText("Copied! ✓")
+            self.btn_copy.setText("Copied!")
             QTimer.singleShot(1500, lambda: self.btn_copy.setText(orig_text))
 
     def _on_text_changed(self):
