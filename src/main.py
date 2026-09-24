@@ -1,6 +1,19 @@
 import os
 import sys
 
+# Fix nagisa implicit relative imports in frozen PyInstaller bundles (No module named 'prepro')
+try:
+    import nagisa.prepro
+    import nagisa.model
+    import nagisa.mecab_system_eval
+    import nagisa.tagger
+    sys.modules['prepro'] = nagisa.prepro
+    sys.modules['model'] = nagisa.model
+    sys.modules['mecab_system_eval'] = nagisa.mecab_system_eval
+    sys.modules['tagger'] = nagisa.tagger
+except Exception:
+    pass
+
 # Ensure src directory is in sys.path
 sys_path_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if sys_path_root not in sys.path:

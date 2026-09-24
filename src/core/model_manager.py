@@ -4,6 +4,19 @@ import gc
 import threading
 from typing import List, Tuple, Optional, Dict, Any, Callable
 
+# Fix nagisa implicit relative imports in frozen PyInstaller bundles (No module named 'prepro')
+try:
+    import nagisa.prepro
+    import nagisa.model
+    import nagisa.mecab_system_eval
+    import nagisa.tagger
+    sys.modules['prepro'] = nagisa.prepro
+    sys.modules['model'] = nagisa.model
+    sys.modules['mecab_system_eval'] = nagisa.mecab_system_eval
+    sys.modules['tagger'] = nagisa.tagger
+except Exception:
+    pass
+
 # Safely import heavy AI runtime libraries at module load time on the main thread
 # to avoid C-extension dynamic loading race conditions in background QThreads.
 try:
@@ -382,6 +395,10 @@ class ModelManager:
                     max_new_tokens=512,
                 )
                 return True
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                raise
             finally:
                 self.is_loading = False
 

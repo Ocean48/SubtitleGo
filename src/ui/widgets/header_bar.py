@@ -1,3 +1,4 @@
+import traceback
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QMessageBox, QDialog
 )
@@ -18,6 +19,7 @@ class ModelLoaderWorker(QThread):
             ok = mgr.load_model()
             self.sig_finished.emit(ok, mgr.device)
         except Exception as e:
+            traceback.print_exc()
             self.sig_error.emit(str(e))
 
 
