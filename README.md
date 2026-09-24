@@ -61,26 +61,28 @@ No Python installation or command-line setup is required to run the pre-built ve
 
 ### Linux System Prerequisites
 
-On Linux distributions, ensure the required GUI, OpenGL, GStreamer multimedia plugins, and build utilities (such as `binutils` for PyInstaller packaging) are installed:
+On Linux distributions, ensure the required GUI, OpenGL, GStreamer multimedia plugins, build utilities, and Python C headers (required for Triton / CUDA kernel JIT compilation on NVIDIA GPUs) are installed:
 
 - **Ubuntu / Debian / Linux Mint**:
   ```bash
   sudo apt update
-  sudo apt install -y binutils ffmpeg libsndfile1 libgl1 libegl1 libxkbcommon-x11-0 \
-                      libdbus-1-3 gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+  sudo apt install -y build-essential python3-dev binutils ffmpeg libsndfile1 \
+                      libgl1 libegl1 libxkbcommon-x11-0 libdbus-1-3 \
+                      gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
                       gstreamer1.0-plugins-bad gstreamer1.0-libav libgstreamer1.0-0
   ```
 
 - **Fedora / RHEL**:
   ```bash
-  sudo dnf install -y binutils ffmpeg libsndfile mesa-libGL mesa-libEGL libxkbcommon-x11 \
+  sudo dnf install -y gcc gcc-c++ python3-devel binutils ffmpeg libsndfile \
+                      mesa-libGL mesa-libEGL libxkbcommon-x11 \
                       gstreamer1-plugins-base gstreamer1-plugins-good \
                       gstreamer1-plugins-bad-free gstreamer1-plugin-libav
   ```
 
 - **Arch Linux**:
   ```bash
-  sudo pacman -S binutils ffmpeg libsndfile libxkbcommon xcb-util-wm xcb-util-image \
+  sudo pacman -S base-devel binutils ffmpeg libsndfile libxkbcommon xcb-util-wm xcb-util-image \
                  gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav
   ```
 
