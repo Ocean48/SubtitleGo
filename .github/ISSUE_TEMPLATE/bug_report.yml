@@ -10,8 +10,8 @@ body:
     id: version
     attributes:
       label: SubtitleGo Version
-      description: What version of SubtitleGo are you running? (e.g., v1.0.0, running from source main)
-      placeholder: v1.0.0
+      description: What version of SubtitleGo are you running? (e.g., v0.1.0, running from source main)
+      placeholder: v0.1.0
     validations:
       required: true
   - type: dropdown

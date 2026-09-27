@@ -2,18 +2,19 @@
 
 [![GitHub Release](https://img.shields.io/github/v/release/Ocean48/SubtitleGo?color=38bdf8)](https://github.com/Ocean48/SubtitleGo/releases)
 [![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey)](https://github.com/Ocean48/SubtitleGo)
 [![GUI Framework](https://img.shields.io/badge/GUI-PySide6%20(Qt)-green)](https://wiki.qt.io/Qt_for_Python)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-A standalone, high-performance Windows desktop application powered by **PySide6** and **Qwen3-ASR (1.7B)** for automatic speech recognition, smart silence-based pause detection, live video playback, and natural-paced subtitle generation.
+A standalone, high-performance cross-platform desktop application powered by **PySide6** and **Qwen3-ASR (1.7B)** for automatic speech recognition, smart silence-based pause detection, live video playback, and natural-paced subtitle generation.
 
 ---
 
 ## Key Features
 
-- **Direct In-Process Inference**: Runs Qwen3-ASR locally without external web servers or Docker containers. Automatic CUDA GPU acceleration with CPU fallback.
-- **Smart Pacing Engine**: Intelligent speech pause segmentation, clause splitting, line character limits (42 Latin / 18 CJK), and timestamp interpolation (target 2.0s - 4.5s per cue).
-- **52 Languages & Dialects**: Multi-language support with automatic language detection.
+- **Direct In-Process Inference**: Runs Qwen3-ASR locally without external web servers or Docker containers. Automatic CUDA (Linux/Windows) and Apple Silicon Metal/MPS (macOS) GPU acceleration with CPU fallback.
+- **Smart Pacing Engine**: Intelligent speech pause segmentation, clause splitting, line character limits (42 Latin / 18 CJK), and timestamp interpolation (target 2.0s – 4.5s per cue).
+- **52 Languages & Dialects**: Multi-language recognition with automatic language detection.
 - **Media Player & Subtitle Overlay**: Built-in video preview player with live synchronized high-contrast subtitle overlay.
 - **Interactive Cue Studio**:
   - Live subtitle text search with instant highlight.
@@ -22,46 +23,51 @@ A standalone, high-performance Windows desktop application powered by **PySide6*
   - Active cue auto-scroll and highlight during playback.
 - **Bidirectional Raw Subtitle Editor**: Live synchronization across Cue Table, SRT View, and WebVTT View with one-click clipboard copy.
 - **Batch Processing & Concurrency**: Multi-file batch queue with configurable worker threads (1, 2, or 4).
-- **Auto-Save & ZIP Bundling**: Automatically saves `.srt` and `.vtt` alongside source media files, or export all subtitles as a single `.zip` archive.
-- **Standalone Distribution**: Portable Windows package with bundled FFmpeg and externalized model weights.
+- **Auto-Save & ZIP Bundling**: Automatically saves `.srt` and `.vtt` alongside source media files, or exports all subtitles as a single `.zip` archive.
+- **Standalone Distribution**: Portable binary packages with bundled static FFmpeg and automatic model management.
 
 ---
 
-## Quick Start (Pre-built Windows Executable)
+## Quick Start (Pre-built Release)
 
-No Python installation or command-line setup is required to run the pre-built version.
+Pre-built binaries require no Python installation or command-line setup.
 
 ### 1. Download Release
-1. Go to the [SubtitleGo Releases Page](https://github.com/Ocean48/SubtitleGo/releases).
-2. Download **`SubtitleGo-v1.0.0-windows-x64.zip`**.
+Grab the latest package for your operating system from the [SubtitleGo Releases Page](https://github.com/Ocean48/SubtitleGo/releases):
 
-### 2. Run
-1. Extract the ZIP archive to any folder on your computer.
-2. Double-click **`SubtitleGo.exe`**.
-3. On first startup, if model weights are not pre-bundled, the application will display a one-click download dialog to fetch the Qwen3-ASR model from Hugging Face Hub.
+| OS | Package | Executable |
+| :--- | :--- | :--- |
+| **Windows (x64)** | `SubtitleGo-v0.1.0-windows-x64.zip` | `SubtitleGo.exe` |
+| **Linux (x64)** | `SubtitleGo-v0.1.0-linux-x64.zip` | `./SubtitleGo` |
+| **macOS (Apple Silicon)** | `SubtitleGo-v0.1.0-macos-arm64.zip` | `SubtitleGo.app` |
+
+### 2. Launch
+1. Extract the ZIP archive to your preferred directory.
+2. Launch the application (`SubtitleGo.exe` on Windows, `./SubtitleGo` on Linux, or `SubtitleGo.app` on macOS).
+3. On first startup, the application provides an automated setup wizard to configure the local AI engine and download the Qwen3-ASR model weights from Hugging Face Hub if not already present.
 
 ---
 
-## Hardware Compatibility & Tested Environments
+## Hardware Compatibility & Acceleration
 
-| Component | Tested / Supported | Notes |
+| Component | Supported / Tested | Notes |
 | :--- | :--- | :--- |
-| **Operating System** | **Linux (Ubuntu, Debian, Fedora, Arch)** (Tested)<br>**Windows 11 (64-bit)** (Tested)<br>**macOS Sonoma / Sequoia (Apple Silicon)** (Tested)<br>Windows 10 (64-bit)<br>macOS (Intel x86_64) | Fully tested and validated across Linux, Windows, and macOS. |
-| **GPU / Acceleration** | **NVIDIA RTX 50-Series (Blackwell architecture)** (Tested)<br>**Apple Silicon Metal / MPS (M1/M2/M3/M4 Series)** (Tested)<br>NVIDIA RTX 40 / 30 / 20 Series | High-speed FP16/BF16 tensor acceleration via CUDA (Linux/Windows) and Metal Performance Shaders (Apple Silicon). |
-| **CPU Fallback** | Intel / AMD x64 processors<br>Apple Silicon CPU fallback | Automatic CPU execution fallback when no compatible GPU/MPS device is detected or during low-memory conditions. |
+| **Operating System** | **Linux (Ubuntu, Debian, Fedora, Arch)**<br>**Windows 10 / 11 (64-bit)**<br>**macOS Sonoma / Sequoia (Apple Silicon & Intel)** | Fully validated across Linux, Windows, and macOS. |
+| **GPU Acceleration** | **NVIDIA RTX 20 / 30 / 40 / 50 Series** (CUDA)<br>**Apple Silicon M1 / M2 / M3 / M4 Series** (Metal / MPS) | High-speed FP16/BF16 tensor acceleration via CUDA (Linux/Windows) and Metal Performance Shaders (macOS). |
+| **CPU Fallback** | Intel / AMD x64 & Apple Silicon CPU | Automatic fallback when no compatible GPU/MPS device is detected or under low VRAM conditions. |
 
 ---
 
 ## Running from Source
 
 ### Prerequisites
-- **Operating System**: Linux (Ubuntu 20.04+, Debian 11+, Fedora 38+, Arch), Windows 10/11 (64-bit), or macOS 12+
 - **Python**: 3.10, 3.11, or 3.12 (64-bit)
-- **GPU (Recommended)**: NVIDIA GPU with CUDA 11.8+ or 12.1+ (Tested with NVIDIA RTX 50-Series; CPU mode supported)
+- **FFmpeg**: Static binaries auto-downloaded via script, or system-installed.
+- **GPU (Recommended)**: NVIDIA GPU with CUDA 11.8+ / 12.1+ / 12.8+, or Apple Silicon Mac.
 
-### Linux System Prerequisites
+### Linux System Dependencies
 
-On Linux distributions, ensure the required GUI, OpenGL, GStreamer multimedia plugins, build utilities, and Python C headers (required for Triton / CUDA kernel JIT compilation on NVIDIA GPUs) are installed:
+On Linux distributions, ensure the required multimedia and GUI libraries are installed:
 
 - **Ubuntu / Debian / Linux Mint**:
   ```bash
@@ -106,16 +112,16 @@ On Linux distributions, ensure the required GUI, OpenGL, GStreamer multimedia pl
      .\.venv\Scripts\Activate.ps1
      ```
 
-3. **Install PyTorch with CUDA support (or CPU)**:
+3. **Install PyTorch**:
    ```bash
-   # For NVIDIA RTX 50-Series (Blackwell sm_120, CUDA 12.8):
+   # NVIDIA RTX 50-Series (Blackwell sm_120, CUDA 12.8):
    pip install --pre torch torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
-   
-   # For NVIDIA RTX 40 / 30 / 20 Series (CUDA 12.4 / 12.1):
+
+   # NVIDIA RTX 40 / 30 / 20 Series (CUDA 12.4 / 12.1):
    pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
-   
-   # For CPU only:
-   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+   # Apple Silicon (MPS) or CPU only:
+   pip install torch torchaudio
    ```
 
 4. **Install Python dependencies**:
@@ -123,8 +129,7 @@ On Linux distributions, ensure the required GUI, OpenGL, GStreamer multimedia pl
    pip install -r requirements.txt
    ```
 
-5. **Download FFmpeg binaries**:
-   Run the automated downloader to place static `ffmpeg` and `ffprobe` into the `bin/` folder:
+5. **Download static FFmpeg binaries**:
    ```bash
    python download_ffmpeg.py
    ```
@@ -140,9 +145,9 @@ On Linux distributions, ensure the required GUI, OpenGL, GStreamer multimedia pl
 
 The application resolves Qwen3-ASR model weights in the following order:
 
-1. `./models/Qwen3-ASR-1.7B` (folder adjacent to `main.py` or `SubtitleGo.exe`)
+1. `./models/Qwen3-ASR-1.7B` (folder adjacent to the application root or executable)
 2. Local Hugging Face cache (`~/.cache/huggingface/hub/`)
-3. Automatic GUI download prompt from Hugging Face Hub (`Qwen/Qwen3-ASR-1.7B`)
+3. Automatic in-app download prompt from Hugging Face Hub (`Qwen/Qwen3-ASR-1.7B`)
 
 To pre-download the model weights manually:
 ```bash
@@ -151,46 +156,32 @@ python -c "from huggingface_hub import snapshot_download; snapshot_download(repo
 
 ---
 
-## Building the Standalone Executable
+## Building Standalone Packages
 
-To build the standalone executable and create the release ZIP package:
+To compile the standalone distribution package with PyInstaller:
 
-1. **Activate the virtual environment**:
-   - **Linux / macOS**:
-     ```bash
-     source .venv/bin/activate
-     ```
-   - **Windows (PowerShell)**:
-     ```powershell
-     .\.venv\Scripts\Activate.ps1
-     ```
-
-2. **Ensure all dependencies and PyInstaller are installed**:
+1. **Activate your virtual environment and install dependencies**:
    ```bash
+   source .venv/bin/activate  # or .\.venv\Scripts\Activate.ps1 on Windows
    pip install -r requirements.txt
-   ```
-
-3. **Ensure FFmpeg is present in `bin/`**:
-   ```bash
    python download_ffmpeg.py
    ```
 
-4. **Run the build script**:
+2. **Run the automated build script**:
    ```bash
-   # Standard lightweight release (recommended for GitHub Releases):
+   # Standard lightweight distribution (recommended for GitHub Releases):
    python build.py
 
-   # Optional offline standalone bundle with embedded weights:
+   # Offline standalone bundle (includes pre-bundled model weights):
    python build.py --include-models
 
-   # Fast compilation without creating a .zip archive:
+   # Fast local build without creating a .zip archive:
    python build.py --no-zip
    ```
 
-5. **Locate build outputs**:
-   The script will package and output:
-   - **`dist/SubtitleGo/`**: Portable standalone application folder containing the binary executable (`SubtitleGo` on Linux/macOS or `SubtitleGo.exe` on Windows), bundled FFmpeg binaries, and dependencies.
-   - **`dist/SubtitleGo-v1.0.0-<platform>.zip`**: Compressed release archive ready for distribution via GitHub Releases.
+3. **Build outputs**:
+   - **`dist/SubtitleGo/`**: Portable standalone application folder containing the binary executable, bundled FFmpeg, and dependencies.
+   - **`dist/SubtitleGo-v0.1.0-<platform>.zip`**: Compressed release archive ready for distribution.
 
 ---
 
@@ -199,45 +190,33 @@ To build the standalone executable and create the release ZIP package:
 ```
 SubtitleGo/
 ├── .github/
-│   ├── ISSUE_TEMPLATE/
-│   │   ├── bug_report.yml     # Structured bug report template
-│   │   └── feature_request.yml # Feature request template
-│   ├── workflows/
-│   │   └── ci.yml             # Automated unit test CI workflow
-│   └── PULL_REQUEST_TEMPLATE.md
-├── bin/                       # Bundled static FFmpeg / FFprobe binaries
-│   └── .gitkeep
+│   ├── ISSUE_TEMPLATE/        # Structured bug report & feature request templates
+│   └── workflows/ci.yml       # Automated CI test workflow
+├── bin/                       # Static FFmpeg / FFprobe binaries
 ├── build.py                   # PyInstaller automated build & ZIP packager
 ├── CONTRIBUTING.md             # Contributor guidelines and workflow
-├── download_ffmpeg.py         # One-click static FFmpeg downloader
+├── download_ffmpeg.py         # Static FFmpeg downloader
 ├── models/                    # Qwen3-ASR model weights directory
-│   └── .gitkeep
-├── requirements.txt           # Python package requirements
+├── requirements.txt           # Python package dependencies
 ├── src/
 │   ├── __init__.py            # Package metadata & exports
 │   ├── __version__.py         # Single source of truth for version constants
-│   ├── main.py                # Desktop application entry point
-│   ├── core/                  # In-process engine modules
+│   ├── main.py                # Application entry point
+│   ├── core/                  # Core processing engine
 │   │   ├── audio_processor.py # 16kHz WAV conversion & silence detection
 │   │   ├── ffmpeg_helper.py   # FFmpeg binary auto-discovery
+│   │   ├── hardware_detector.py # GPU & hardware acceleration detection
 │   │   ├── model_manager.py   # Qwen3-ASR lifecycle & batch inference
-│   │   ├── queue_manager.py   # Multi-task batch queue & concurrency
-│   │   ├── subtitle_formatter.py # Smart pacing & SRT/VTT parsing
-│   │   └── transcription_worker.py # Multi-stage QThread background worker
-│   └── ui/                    # PySide6 Desktop UI
-│       ├── main_window.py     # Main application window & split layout
+│   │   ├── queue_manager.py   # Batch processing queue & concurrency
+│   │   ├── runtime_manager.py # Isolated AI runtime management & pip bootstrap
+│   │   ├── subtitle_formatter.py # Smart pacing, clause split & SRT/VTT parsing
+│   │   └── transcription_worker.py # Background QThread transcription worker
+│   └── ui/                    # PySide6 User Interface
+│       ├── main_window.py     # Main application window & layout
 │       ├── styles.py          # Dark theme QSS stylesheet
-│       └── widgets/           # Modular Qt widgets
-│           ├── cue_editor.py  # Searchable & editable cue table
-│           ├── header_bar.py  # Hardware & GPU status indicator
-│           ├── model_download_dialog.py # Model weights downloader dialog
-│           ├── queue_list.py  # Drag-and-drop queue & folder loader
-│           ├── raw_view.py    # Synchronized raw SRT / WebVTT editor
-│           ├── settings_panel.py # Language & pacing settings panel
-│           └── video_player.py # Media preview with live subtitle overlay
+│       └── widgets/           # Modular Qt UI components
 ├── subtitle_studio.spec       # PyInstaller build specification
-├── test_subtitle_pipeline.py  # Unit test suite
-├── .gitignore                 # Clean repository exclusion rules
+├── test_subtitle_pipeline.py  # Pipeline & unit test suite
 ├── LICENSE                    # GNU General Public License v3.0
 └── README.md                  # Project documentation & release guide
 ```

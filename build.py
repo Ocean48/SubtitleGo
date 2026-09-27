@@ -69,6 +69,7 @@ def build_and_package(
         flag = "1" if bundle_ai else "0"
         env["SUBTITLEGO_BUNDLE_AI"] = flag
         env["SUBTITLE_STUDIO_BUNDLE_AI"] = flag
+        env["SUBTITLEGO_VERSION"] = str(version)
 
         cmd = [sys.executable, "-m", "PyInstaller", "--clean", "-y", spec_file]
         print(f"Executing PyInstaller command: {' '.join(cmd)}")

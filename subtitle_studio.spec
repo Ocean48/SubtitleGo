@@ -9,6 +9,17 @@ block_cipher = None
 project_dir = os.path.abspath(SPECPATH)
 src_dir = os.path.join(project_dir, 'src')
 
+if project_dir not in sys.path:
+    sys.path.insert(0, project_dir)
+
+try:
+    from src.__version__ import __version__, __app_name__
+except ImportError:
+    __version__ = "0.1.0"
+    __app_name__ = "SubtitleGo"
+
+app_version = os.environ.get("SUBTITLEGO_VERSION", __version__)
+
 # Environment variable controlling whether to statically bundle AI weights/runtime or keep lean
 bundle_ai_runtime = os.environ.get("SUBTITLEGO_BUNDLE_AI", os.environ.get("SUBTITLE_STUDIO_BUNDLE_AI", "0")) == "1"
 
@@ -262,12 +273,12 @@ coll = COLLECT(
 if sys.platform == 'darwin':
     app = BUNDLE(
         coll,
-        name='SubtitleGo.app',
+        name=f'{__app_name__}.app',
         icon=None,
         bundle_identifier='com.subtitlego.app',
         info_plist={
-            'CFBundleShortVersionString': '1.0.0',
-            'CFBundleVersion': '1.0.0',
+            'CFBundleShortVersionString': app_version,
+            'CFBundleVersion': app_version,
             'NSHighResolutionCapable': 'True',
         },
     )

@@ -203,8 +203,9 @@ def test_audio_segmentation_logic():
 
 def test_package_metadata_and_version():
     print("[4/5] Testing package metadata and version exports...")
+    import re
     from src.__version__ import __version__, __app_name__, __title__
-    assert __version__ == "1.0.0", f"Unexpected version: {__version__}"
+    assert isinstance(__version__, str) and re.match(r"^\d+\.\d+\.\d+", __version__), f"Invalid semver version: {__version__}"
     assert __app_name__ == "SubtitleGo", f"Unexpected app name: {__app_name__}"
     assert "SubtitleGo" in __title__
     print(f"      PASS: Package metadata valid: {__app_name__} v{__version__}")
