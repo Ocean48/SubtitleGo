@@ -846,20 +846,21 @@ def install_ai_runtime(
     
     if target_type == "cuda":
         hw = detect_hardware_capabilities()
-        cuda_extra_idx = "https://download.pytorch.org/whl/nightly/cu128" if hw.get("is_rtx_50_series") else "https://download.pytorch.org/whl/cu124"
-        extra_idx = ["--extra-index-url", cuda_extra_idx]
+        cuda_index_url = "https://download.pytorch.org/whl/nightly/cu128" if hw.get("is_rtx_50_series") else "https://download.pytorch.org/whl/cu124"
+        index_args = ["--index-url", cuda_index_url, "--extra-index-url", "https://pypi.org/simple"]
+        if hw.get("is_rtx_50_series"):
+            index_args.append("--pre")
     elif target_type == "cpu" and sys.platform != "darwin":
-        extra_idx = ["--extra-index-url", "https://download.pytorch.org/whl/cpu"]
+        index_args = ["--index-url", "https://download.pytorch.org/whl/cpu", "--extra-index-url", "https://pypi.org/simple"]
     else:
-        extra_idx = []
+        index_args = []
 
     deps_cmd = pip_cmd_base + [
         "install",
         "--target", pkg_dir,
         "--no-user",
         "--no-cache-dir",
-        "--upgrade",
-    ] + pip_extra_flags + extra_idx + common_pkgs
+    ] + pip_extra_flags + index_args + common_pkgs
     _run_pip_step(deps_cmd, _log, progress_callback, 55.0, 35.0, cancel_event, pkg_dir=pkg_dir)
 
     # Re-initialize runtime environment and verify
