@@ -310,6 +310,55 @@ QCheckBox::indicator:checked {{
     border-color: {p["accent_cyan"]};
 }}
 
+/* Radio Button */
+QRadioButton {{
+    color: {p["text_secondary"]};
+    spacing: 8px;
+    font-size: 12px;
+    font-weight: 300;
+    padding: 3px 0px;
+    background: transparent;
+}}
+
+QRadioButton:hover {{
+    color: {p["text_primary"]};
+}}
+
+QRadioButton:checked {{
+    color: {p["accent_cyan"]};
+    font-weight: 400;
+}}
+
+QRadioButton:disabled {{
+    color: {p["text_muted"]};
+}}
+
+QRadioButton::indicator {{
+    width: 14px;
+    height: 14px;
+    border-radius: 7px;
+    border: 1px solid {p["border_default"]};
+    background-color: {p["bg_input"]};
+}}
+
+QRadioButton::indicator:hover {{
+    border: 1px solid {p["border_hover"]};
+}}
+
+QRadioButton::indicator:checked {{
+    border: 3px solid {p["accent_primary"]};
+    background-color: {p["bg_input"]};
+}}
+
+QRadioButton::indicator:checked:hover {{
+    border-color: {p["accent_cyan"]};
+}}
+
+QRadioButton::indicator:disabled {{
+    border: 1px solid {p["border_subtle"]};
+    background-color: {p["bg_input"]};
+}}
+
 /* Progress Bar */
 QProgressBar {{
     background-color: {p["bg_input"]};

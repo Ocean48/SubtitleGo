@@ -237,14 +237,16 @@ class SetupWizardDialog(QDialog):
 
             self.btn_group = QButtonGroup(self)
             is_rtx_50 = self.hw_info.get("is_rtx_50_series", False)
-            cuda_title = "NVIDIA GPU Acceleration (CUDA 12.8 / RTX 50-Series Blackwell) (~2.0 GB)" if is_rtx_50 else "NVIDIA GPU Acceleration (CUDA 12.4) - Recommended for RTX / GTX GPUs (~2.0 GB)"
+            cuda_title = (
+                "NVIDIA GPU Acceleration (CUDA 12.8 / RTX 50-Series Blackwell) (~2.0 GB)"
+                if is_rtx_50
+                else "NVIDIA GPU Acceleration (CUDA 12.4) - Recommended for RTX / GTX GPUs (~2.0 GB)"
+            )
             self.rb_primary = QRadioButton(cuda_title)
-            self.rb_primary.setStyleSheet("color: #f8fafc; font-size: 12px;")
             self.btn_group.addButton(self.rb_primary, 1)
             page_sel_layout.addWidget(self.rb_primary)
 
             self.rb_secondary = QRadioButton("CPU Mode - Standard Compatibility (Smallest Download ~250 MB)")
-            self.rb_secondary.setStyleSheet("color: #f8fafc; font-size: 12px;")
             self.btn_group.addButton(self.rb_secondary, 2)
             page_sel_layout.addWidget(self.rb_secondary)
 
