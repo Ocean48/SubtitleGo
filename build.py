@@ -15,7 +15,7 @@ try:
     from src.__version__ import __app_name__, __version__, __title__
 except ImportError:
     __app_name__ = "SubtitleGo"
-    __version__ = "1.0.0"
+    __version__ = "0.1.0"
     __title__ = "SubtitleGo"
 
 
