@@ -33,13 +33,16 @@ def get_candidate_package_dirs() -> List[str]:
     if sys.platform == "win32":
         local_app_data = os.environ.get("LOCALAPPDATA", "")
         if local_app_data:
+            candidates.append(os.path.abspath(os.path.join(local_app_data, "SubtitleGo", "runtime", "packages")))
             candidates.append(os.path.abspath(os.path.join(local_app_data, "SubtitleStudio", "runtime", "packages")))
-        home_appdata = os.path.join(os.path.expanduser("~"), "AppData", "Local", "SubtitleStudio", "runtime", "packages")
+        home_appdata = os.path.join(os.path.expanduser("~"), "AppData", "Local", "SubtitleGo", "runtime", "packages")
         if home_appdata not in candidates:
             candidates.append(os.path.abspath(home_appdata))
     elif sys.platform == "darwin":
+        candidates.append(os.path.abspath(os.path.expanduser("~/Library/Application Support/SubtitleGo/runtime/packages")))
         candidates.append(os.path.abspath(os.path.expanduser("~/Library/Application Support/SubtitleStudio/runtime/packages")))
     else:
+        candidates.append(os.path.abspath(os.path.expanduser("~/.local/share/subtitlego/runtime/packages")))
         candidates.append(os.path.abspath(os.path.expanduser("~/.local/share/subtitlestudio/runtime/packages")))
 
     return candidates
@@ -75,11 +78,11 @@ def get_runtime_base_dir() -> str:
 
     # Fallback to User AppData
     if sys.platform == "win32":
-        user_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "SubtitleStudio", "runtime")
+        user_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "SubtitleGo", "runtime")
     elif sys.platform == "darwin":
-        user_dir = os.path.expanduser("~/Library/Application Support/SubtitleStudio/runtime")
+        user_dir = os.path.expanduser("~/Library/Application Support/SubtitleGo/runtime")
     else:
-        user_dir = os.path.expanduser("~/.local/share/subtitlestudio/runtime")
+        user_dir = os.path.expanduser("~/.local/share/subtitlego/runtime")
 
     os.makedirs(user_dir, exist_ok=True)
     return user_dir

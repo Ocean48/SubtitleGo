@@ -16,7 +16,7 @@ try:
 except ImportError:
     __app_name__ = "SubtitleGo"
     __version__ = "1.0.0"
-    __title__ = "SubtitleGo (Subtitle Studio)"
+    __title__ = "SubtitleGo"
 
 
 def get_default_platform_tag() -> str:
@@ -59,15 +59,14 @@ def build_and_package(
 
     root_dir = PROJECT_ROOT
     spec_file = os.path.join(root_dir, "subtitle_studio.spec")
-    dist_app_dir = os.path.join(root_dir, "dist", "SubtitleStudio")
+    dist_app_dir = os.path.join(root_dir, "dist", __app_name__)
 
     # 1. Run PyInstaller
     if not skip_pyinstaller:
         env = os.environ.copy()
-        if bundle_ai:
-            env["SUBTITLE_STUDIO_BUNDLE_AI"] = "1"
-        else:
-            env["SUBTITLE_STUDIO_BUNDLE_AI"] = "0"
+        flag = "1" if bundle_ai else "0"
+        env["SUBTITLEGO_BUNDLE_AI"] = flag
+        env["SUBTITLE_STUDIO_BUNDLE_AI"] = flag
 
         cmd = [sys.executable, "-m", "PyInstaller", "--clean", "-y", spec_file]
         print(f"Executing PyInstaller command: {' '.join(cmd)}")
@@ -83,7 +82,7 @@ def build_and_package(
     # 2. Copy FFmpeg binaries into dist directory if present
     local_bin = os.path.join(root_dir, "bin")
     target_bin = os.path.join(dist_app_dir, "bin")
-    target_app_bundle = os.path.join(root_dir, "dist", "SubtitleStudio.app")
+    target_app_bundle = os.path.join(root_dir, "dist", f"{__app_name__}.app")
 
     if os.path.exists(local_bin):
         print(f"Bundling bin directory to {target_bin}...")
@@ -143,11 +142,11 @@ def build_and_package(
         packaged_with_ditto = False
         if sys.platform == "darwin" and os.path.exists(target_app_bundle) and shutil.which("ditto"):
             # Ensure executable permission on main binary inside bundle
-            app_binary = os.path.join(target_app_bundle, "Contents", "MacOS", "SubtitleStudio")
+            app_binary = os.path.join(target_app_bundle, "Contents", "MacOS", __app_name__)
             if os.path.exists(app_binary):
                 os.chmod(app_binary, 0o755)
 
-            cmd = ["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", "SubtitleStudio.app", release_zip_path]
+            cmd = ["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", f"{__app_name__}.app", release_zip_path]
             res = subprocess.run(cmd, cwd=os.path.join(root_dir, "dist"))
             if res.returncode == 0:
                 packaged_with_ditto = True
@@ -177,7 +176,7 @@ def build_and_package(
         print("\nPackage generated successfully!")
         print(f"Archive:    {release_zip_path} ({zip_size_mb:.2f} MB)")
         print(f"App Folder: {dist_app_dir}")
-        exe_path = os.path.join(dist_app_dir, "SubtitleStudio.exe" if sys.platform == "win32" else "SubtitleStudio")
+        exe_path = os.path.join(dist_app_dir, f"{__app_name__}.exe" if sys.platform == "win32" else __app_name__)
         if os.path.exists(exe_path):
             print(f"Executable: {exe_path}")
         if os.path.exists(target_app_bundle):

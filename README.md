@@ -37,7 +37,7 @@ No Python installation or command-line setup is required to run the pre-built ve
 
 ### 2. Run
 1. Extract the ZIP archive to any folder on your computer.
-2. Double-click **`SubtitleStudio.exe`**.
+2. Double-click **`SubtitleGo.exe`**.
 3. On first startup, if model weights are not pre-bundled, the application will display a one-click download dialog to fetch the Qwen3-ASR model from Hugging Face Hub.
 
 ---
@@ -140,7 +140,7 @@ On Linux distributions, ensure the required GUI, OpenGL, GStreamer multimedia pl
 
 The application resolves Qwen3-ASR model weights in the following order:
 
-1. `./models/Qwen3-ASR-1.7B` (folder adjacent to `main.py` or `SubtitleStudio.exe`)
+1. `./models/Qwen3-ASR-1.7B` (folder adjacent to `main.py` or `SubtitleGo.exe`)
 2. Local Hugging Face cache (`~/.cache/huggingface/hub/`)
 3. Automatic GUI download prompt from Hugging Face Hub (`Qwen/Qwen3-ASR-1.7B`)
 
@@ -189,7 +189,7 @@ To build the standalone executable and create the release ZIP package:
 
 5. **Locate build outputs**:
    The script will package and output:
-   - **`dist/SubtitleStudio/`**: Portable standalone application folder containing the binary executable (`SubtitleStudio` on Linux/macOS or `SubtitleStudio.exe` on Windows), bundled FFmpeg binaries, and dependencies.
+   - **`dist/SubtitleGo/`**: Portable standalone application folder containing the binary executable (`SubtitleGo` on Linux/macOS or `SubtitleGo.exe` on Windows), bundled FFmpeg binaries, and dependencies.
    - **`dist/SubtitleGo-v1.0.0-<platform>.zip`**: Compressed release archive ready for distribution via GitHub Releases.
 
 ---

@@ -10,7 +10,7 @@ project_dir = os.path.abspath(SPECPATH)
 src_dir = os.path.join(project_dir, 'src')
 
 # Environment variable controlling whether to statically bundle AI weights/runtime or keep lean
-bundle_ai_runtime = os.environ.get("SUBTITLE_STUDIO_BUNDLE_AI", "0") == "1"
+bundle_ai_runtime = os.environ.get("SUBTITLEGO_BUNDLE_AI", os.environ.get("SUBTITLE_STUDIO_BUNDLE_AI", "0")) == "1"
 
 datas = []
 binaries = []
@@ -202,7 +202,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='SubtitleStudio',
+    name='SubtitleGo',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -223,13 +223,13 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='SubtitleStudio',
+    name='SubtitleGo',
 )
 
 if sys.platform == 'darwin':
     app = BUNDLE(
         coll,
-        name='SubtitleStudio.app',
+        name='SubtitleGo.app',
         icon=None,
         bundle_identifier='com.subtitlego.app',
         info_plist={

@@ -116,11 +116,11 @@ def resolve_log_file_path() -> str:
 
     if sys.platform == "win32":
         local_app_data = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
-        user_log_dir = os.path.join(local_app_data, "SubtitleStudio", "logs")
+        user_log_dir = os.path.join(local_app_data, "SubtitleGo", "logs")
     elif sys.platform == "darwin":
-        user_log_dir = os.path.expanduser("~/Library/Logs/SubtitleStudio")
+        user_log_dir = os.path.expanduser("~/Library/Logs/SubtitleGo")
     else:
-        user_log_dir = os.path.expanduser("~/.local/state/subtitlestudio/logs")
+        user_log_dir = os.path.expanduser("~/.local/state/subtitlego/logs")
 
     os.makedirs(user_log_dir, exist_ok=True)
     return os.path.join(user_log_dir, "subtitlego.log")
