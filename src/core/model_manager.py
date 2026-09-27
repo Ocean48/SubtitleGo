@@ -99,7 +99,7 @@ def get_model_dir() -> str:
 def find_model_path() -> Optional[str]:
     """
     Finds the path to local Qwen3-ASR model weights.
-    Returns path string if valid model files exist, else None.
+    Returns path string if valid model files exist and weights are complete (>1.5 GB), else None.
     """
     candidates = [
         get_model_dir(),
@@ -107,10 +107,37 @@ def find_model_path() -> Optional[str]:
     ]
 
     for c in candidates:
-        if os.path.isdir(c):
-            # Check for config.json and model weights
-            if os.path.exists(os.path.join(c, "config.json")):
-                return os.path.abspath(c)
+        if not os.path.exists(c):
+            continue
+
+        check_dirs = [c]
+        snapshots_dir = os.path.join(c, "snapshots")
+        if os.path.isdir(snapshots_dir):
+            try:
+                for s in os.listdir(snapshots_dir):
+                    snap_path = os.path.join(snapshots_dir, s)
+                    if os.path.isdir(snap_path):
+                        check_dirs.append(snap_path)
+            except Exception:
+                pass
+
+        for target_dir in check_dirs:
+            if os.path.isdir(target_dir):
+                config_file = os.path.join(target_dir, "config.json")
+                if os.path.exists(config_file):
+                    try:
+                        weight_files = [
+                            os.path.join(target_dir, f) for f in os.listdir(target_dir)
+                            if (f.endswith(".safetensors") or f.endswith(".bin") or f.endswith(".pt"))
+                            and not f.endswith(".incomplete")
+                        ]
+                        if weight_files:
+                            total_weight_size = sum(os.path.getsize(f) for f in weight_files if os.path.isfile(f))
+                            # Qwen3-ASR-1.7B weights are ~3.4 GB. Ensure complete download (> 1.5 GB).
+                            if total_weight_size > 1.5 * 1024 * 1024 * 1024:
+                                return os.path.abspath(target_dir)
+                    except Exception:
+                        pass
 
     return None
 

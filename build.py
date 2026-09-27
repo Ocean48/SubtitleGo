@@ -40,7 +40,7 @@ def get_default_platform_tag() -> str:
 
 def build_and_package(
     include_models: bool = False,
-    bundle_ai: bool = False,
+    bundle_ai: bool = None,
     create_zip: bool = True,
     custom_version: str = None,
     platform_tag: str = None,
@@ -48,12 +48,14 @@ def build_and_package(
 ):
     version = custom_version or __version__
     plat_tag = platform_tag or get_default_platform_tag()
+    if bundle_ai is None:
+        bundle_ai = (sys.platform == "darwin")
 
     print("========================================")
     print(f"Building {__title__}")
     print(f"Version:  v{version}")
     print(f"Platform: {plat_tag}")
-    print(f"AI Engine: {'Static Bundled (Legacy)' if bundle_ai else 'Dynamic First-Launch Setup (~80 MB Lean)'}")
+    print(f"AI Engine: {'Bundled Native Runtime' if bundle_ai else 'Dynamic First-Launch Setup (~80 MB Lean)'}")
     print(f"Models:   {'Bundled (Offline mode)' if include_models else 'Externalized (Standard mode)'}")
     print("========================================")
 
@@ -195,8 +197,17 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--bundle-ai",
+        dest="bundle_ai",
         action="store_true",
-        help="Bundle full PyTorch AI runtime inside PyInstaller binary (large ~6GB release)",
+        default=None,
+        help="Bundle full PyTorch AI runtime inside application package (default on macOS)",
+    )
+    parser.add_argument(
+        "--no-bundle-ai",
+        "--lean",
+        dest="bundle_ai",
+        action="store_false",
+        help="Do not bundle PyTorch runtime (use dynamic first-launch setup; default on Windows/Linux)",
     )
     parser.add_argument(
         "--no-zip",

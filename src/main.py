@@ -92,7 +92,8 @@ def main():
         dlg = SetupWizardDialog()
         res = dlg.exec()
         if res != SetupWizardDialog.Accepted and (not is_runtime_installed() or not is_model_downloaded()):
-            logger.warning("Setup incomplete. Continuing with manual setup accessible in settings.")
+            logger.warning("Setup cancelled or incomplete. Exiting application.")
+            sys.exit(0)
 
     # Re-initialize runtime environment paths after setup wizard completes
     init_runtime_environment()
@@ -101,11 +102,6 @@ def main():
 
     # Warm up AI runtime on main thread if installed
     _warmup_ai_runtime()
-
-    window = MainWindow()
-    window.show()
-
-    sys.exit(app.exec())
 
     window = MainWindow()
     window.show()
