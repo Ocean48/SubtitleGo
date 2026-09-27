@@ -23,6 +23,13 @@ from src.core.audio_processor import (
     segment_audio_smart,
     get_audio_duration_seconds,
 )
+from src.core.runtime_manager import (
+    find_system_python,
+    resolve_pip_command,
+    get_pip_extra_install_flags,
+    init_runtime_environment,
+    get_candidate_package_dirs,
+)
 
 
 def generate_synthetic_wav(duration_s: float = 3.0, sample_rate: int = 16000) -> bytes:
@@ -195,12 +202,31 @@ def test_audio_segmentation_logic():
 
 
 def test_package_metadata_and_version():
-    print("[4/4] Testing package metadata and version exports...")
+    print("[4/5] Testing package metadata and version exports...")
     from src.__version__ import __version__, __app_name__, __title__
     assert __version__ == "1.0.0", f"Unexpected version: {__version__}"
     assert __app_name__ == "SubtitleGo", f"Unexpected app name: {__app_name__}"
     assert "SubtitleGo" in __title__
     print(f"      PASS: Package metadata valid: {__app_name__} v{__version__}")
+
+
+def test_runtime_manager_pip_resolution():
+    print("[5/5] Testing runtime manager pip resolution and environment...")
+    sys_py = find_system_python()
+    assert sys_py is not None, "Expected to find a valid Python executable"
+    
+    logs = []
+    pip_cmd = resolve_pip_command(sys_py, log_callback=logs.append)
+    assert isinstance(pip_cmd, list) and len(pip_cmd) >= 1, f"Expected non-empty pip command list, got: {pip_cmd}"
+    
+    flags = get_pip_extra_install_flags(pip_cmd)
+    assert isinstance(flags, list)
+    
+    # Test initialization of runtime environment paths without exceptions
+    init_runtime_environment()
+    candidate_dirs = get_candidate_package_dirs()
+    assert len(candidate_dirs) >= 1
+    print(f"      PASS: Pip resolved ({' '.join(pip_cmd)}) and runtime candidate directories verified.")
 
 
 def main():
@@ -211,6 +237,7 @@ def main():
     test_subtitle_pacing_refiner()
     test_audio_segmentation_logic()
     test_package_metadata_and_version()
+    test_runtime_manager_pip_resolution()
     print("==================================================")
     print(" All SubtitleGo verification tests PASSED.")
     print("==================================================")

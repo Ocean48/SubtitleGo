@@ -109,7 +109,25 @@ def build_and_package(
                     os.chmod(d, 0o755)
         print("FFmpeg binaries bundled.")
 
-    # 3. Handle model weights & logs directory
+    # 3. Bundle Python C API headers if present (required for Triton / C-extension JIT on Linux CUDA)
+    try:
+        import sysconfig
+        py_inc = sysconfig.get_path('include')
+        py_ver_tag = f"python{sys.version_info.major}.{sys.version_info.minor}"
+        if py_inc and os.path.isdir(py_inc):
+            for sub_p in ["include", "_internal/include"]:
+                target_inc_dir = os.path.join(dist_app_dir, sub_p, py_ver_tag)
+                os.makedirs(target_inc_dir, exist_ok=True)
+                for item in os.listdir(py_inc):
+                    s = os.path.join(py_inc, item)
+                    d = os.path.join(target_inc_dir, item)
+                    if os.path.isfile(s):
+                        shutil.copy2(s, d)
+            print("Python C headers bundled for Triton / JIT acceleration.")
+    except Exception as e:
+        print(f"Notice: Could not copy Python C headers: {e}")
+
+    # 4. Handle model weights & logs directory
     target_models = os.path.join(dist_app_dir, "models")
     os.makedirs(target_models, exist_ok=True)
     os.makedirs(os.path.join(dist_app_dir, "logs"), exist_ok=True)
@@ -127,7 +145,7 @@ def build_and_package(
     else:
         print("Standard mode: Model weights externalized (downloadable on first run).")
 
-    # 4. Create release ZIP package
+    # 5. Create release ZIP package
     if create_zip:
         suffix = "-offline" if include_models else ""
         release_zip_name = f"{__app_name__}-v{version}-{plat_tag}{suffix}.zip"

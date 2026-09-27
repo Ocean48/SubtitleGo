@@ -620,6 +620,14 @@ class ModelManager:
 
             if "cuda" in self.device:
                 logger.info(f"Engaging {self.device} ({torch.cuda.get_device_name(0)}) with dtype {self.dtype}")
+                try:
+                    torch.backends.cuda.enable_flash_sdp(True)
+                    torch.backends.cuda.enable_mem_efficient_sdp(True)
+                    torch.backends.cuda.enable_math_sdp(True)
+                    if hasattr(torch.backends.cuda, "enable_cudnn_sdp"):
+                        torch.backends.cuda.enable_cudnn_sdp(True)
+                except Exception:
+                    pass
             elif self.device == "mps":
                 logger.info(f"Engaging Apple Silicon MPS with dtype {self.dtype}")
             else:

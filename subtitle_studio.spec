@@ -23,27 +23,45 @@ hiddenimports = [
     'psutil',
     'requests',
     'urllib3',
-    # Standard library modules required by dynamic runtime & transformers
+    # Standard library modules required by dynamic runtime, PyTorch & transformers
+    'unittest',
+    'unittest.mock',
+    'unittest.case',
+    'unittest.suite',
+    'unittest.loader',
+    'unittest.main',
+    'unittest.result',
+    'unittest.runner',
+    'unittest.signals',
+    'unittest.util',
+    'tracemalloc',
+    'cProfile',
+    'profile',
+    'pstats',
+    'timeit',
+    'pdb',
+    'bdb',
+    'cmd',
+    'code',
+    'codeop',
+    'doctest',
+    'pydoc',
+    'linecache',
+    'shlex',
+    'configparser',
+    'optparse',
+    'argparse',
+    'opcode',
     'filecmp',
     'difflib',
     'unicodedata',
     'inspect',
     'csv',
-    'multiprocessing',
-    'multiprocessing.pool',
-    'multiprocessing.dummy',
     'tarfile',
     'zipfile',
     'lzma',
     'bz2',
     'gzip',
-    'xml',
-    'xml.etree',
-    'xml.etree.ElementTree',
-    'xmlrpc',
-    'logging',
-    'logging.handlers',
-    'logging.config',
     'pathlib',
     'dataclasses',
     'uuid',
@@ -53,14 +71,7 @@ hiddenimports = [
     'hmac',
     'hashlib',
     'base64',
-    'sqlite3',
-    'ctypes',
-    'ctypes.util',
-    'ctypes.wintypes',
     'typing_extensions',
-    'importlib',
-    'importlib.metadata',
-    'importlib.resources',
     'copy',
     'tempfile',
     'shutil',
@@ -68,19 +79,7 @@ hiddenimports = [
     'glob',
     'fnmatch',
     'webbrowser',
-    'http',
-    'http.client',
-    'urllib',
-    'urllib.request',
-    'urllib.parse',
-    'urllib.error',
     'mimetypes',
-    'email',
-    'email.mime',
-    'email.mime.text',
-    'email.mime.multipart',
-    'email.parser',
-    'email.policy',
     'numbers',
     'cmath',
     'decimal',
@@ -101,9 +100,6 @@ hiddenimports = [
     'marshal',
     'queue',
     'threading',
-    'concurrent',
-    'concurrent.futures',
-    'asyncio',
     'traceback',
     'warnings',
     'gc',
@@ -117,12 +113,49 @@ hiddenimports = [
     'tokenize',
     'ast',
     'symtable',
+    'ensurepip',
+    'venv',
 ]
+
+# Collect all submodules for complex standard library packages
+stdlib_pkgs_to_collect = [
+    'unittest',
+    'multiprocessing',
+    'concurrent',
+    'asyncio',
+    'logging',
+    'urllib',
+    'http',
+    'email',
+    'xml',
+    'xmlrpc',
+    'importlib',
+    'ctypes',
+    'sqlite3',
+    'json',
+]
+for std_pkg in stdlib_pkgs_to_collect:
+    try:
+        hiddenimports.extend(collect_submodules(std_pkg))
+    except Exception as e:
+        print(f"Notice: collect_submodules for {std_pkg}: {e}")
 
 # Include bin folder (FFmpeg executables) if present
 bin_folder = os.path.join(project_dir, 'bin')
 if os.path.exists(bin_folder):
     datas.append(('bin', 'bin'))
+
+# Bundle Python C API headers if present (required for Triton / C-extension JIT on Linux CUDA)
+import sysconfig
+py_inc = sysconfig.get_path('include')
+py_ver_tag = f"python{sys.version_info.major}.{sys.version_info.minor}"
+if py_inc and os.path.isdir(py_inc):
+    datas.append((py_inc, f"include/{py_ver_tag}"))
+    datas.append((py_inc, f"_internal/include/{py_ver_tag}"))
+plat_inc = sysconfig.get_path('platinclude')
+if plat_inc and os.path.isdir(plat_inc) and plat_inc != py_inc:
+    datas.append((plat_inc, f"include/{py_ver_tag}"))
+    datas.append((plat_inc, f"_internal/include/{py_ver_tag}"))
 
 excludes = ['tkinter', 'matplotlib', 'IPython', 'notebook', 'pytest']
 

@@ -195,6 +195,76 @@ def init_runtime_environment():
                 curr_path = d + os.pathsep + curr_path
         os.environ["PATH"] = curr_path
 
+    # On Linux, register torch and nvidia CUDA shared library directories in LD_LIBRARY_PATH & LIBRARY_PATH
+    elif sys.platform.startswith("linux"):
+        lib_dirs: List[str] = [
+            "/usr/lib/x86_64-linux-gnu",
+            "/usr/lib64",
+            "/lib/x86_64-linux-gnu",
+        ]
+        for pkg_dir in existing_dirs:
+            if pkg_dir not in lib_dirs:
+                lib_dirs.append(pkg_dir)
+            torch_lib = os.path.join(pkg_dir, "torch", "lib")
+            if os.path.isdir(torch_lib) and torch_lib not in lib_dirs:
+                lib_dirs.append(torch_lib)
+            torchaudio_lib = os.path.join(pkg_dir, "torchaudio", "lib")
+            if os.path.isdir(torchaudio_lib) and torchaudio_lib not in lib_dirs:
+                lib_dirs.append(torchaudio_lib)
+
+            # Triton nvidia library directory
+            triton_lib = os.path.join(pkg_dir, "triton", "backends", "nvidia", "lib")
+            if os.path.isdir(triton_lib) and triton_lib not in lib_dirs:
+                lib_dirs.append(triton_lib)
+
+            nvidia_dir = os.path.join(pkg_dir, "nvidia")
+            if os.path.isdir(nvidia_dir):
+                for root, dirs, files in os.walk(nvidia_dir):
+                    if any(f.endswith(".so") or ".so." in f for f in files):
+                        if root not in lib_dirs:
+                            lib_dirs.append(root)
+
+        if lib_dirs:
+            for env_var in ["LD_LIBRARY_PATH", "LIBRARY_PATH"]:
+                curr_ld = os.environ.get(env_var, "")
+                parts = curr_ld.split(":") if curr_ld else []
+                for ld in lib_dirs:
+                    if os.path.isdir(ld) and ld not in parts:
+                        parts.insert(0, ld)
+                os.environ[env_var] = ":".join(parts)
+
+    # Configure C/C++ include paths for dynamic C-extensions and Triton JIT compilation
+    app_base = get_app_base_dir()
+    py_ver = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    candidate_includes = [
+        os.path.join(app_base, "_internal", "include", py_ver),
+        os.path.join(app_base, "include", py_ver),
+        os.path.join(app_base, "_internal", "include"),
+        os.path.join(app_base, "include"),
+    ]
+    try:
+        import sysconfig
+        inc = sysconfig.get_path("include")
+        if inc and inc not in candidate_includes:
+            candidate_includes.append(inc)
+    except Exception:
+        pass
+
+    valid_includes = [p for p in candidate_includes if os.path.isdir(p)]
+    if valid_includes:
+        for env_var in ["C_INCLUDE_PATH", "CPATH", "CPLUS_INCLUDE_PATH", "INCLUDE"]:
+            curr = os.environ.get(env_var, "")
+            parts = curr.split(os.pathsep) if curr else []
+            for inc_p in valid_includes:
+                if inc_p not in parts:
+                    parts.insert(0, inc_p)
+            os.environ[env_var] = os.pathsep.join(parts)
+
+    # Configure PyTorch inference optimizations
+    os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
+    os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 
 def check_runtime_status() -> Tuple[bool, str]:
     """
@@ -204,19 +274,27 @@ def check_runtime_status() -> Tuple[bool, str]:
     import traceback
     init_runtime_environment()
 
-    # Clear any None / broken cached modules
-    for mod_name in ["torch", "torchaudio", "transformers", "accelerate", "qwen_asr", "soundfile", "librosa", "scipy"]:
-        if mod_name in sys.modules and sys.modules[mod_name] is None:
-            del sys.modules[mod_name]
+    # Clear any None / broken cached modules before testing
+    core_packages = ["torch", "transformers", "accelerate", "qwen_asr", "soundfile", "librosa", "scipy"]
+    for mod_name in list(sys.modules.keys()):
+        for pkg in core_packages:
+            if mod_name == pkg or mod_name.startswith(f"{pkg}."):
+                if sys.modules[mod_name] is None or not hasattr(sys.modules[mod_name], "__file__"):
+                    del sys.modules[mod_name]
+                    break
 
     errors = []
     # Primary required packages for Qwen-ASR speech recognition
-    core_packages = ["torch", "transformers", "accelerate", "qwen_asr", "soundfile", "librosa", "scipy"]
     for pkg in core_packages:
         try:
             importlib.import_module(pkg)
         except Exception as e:
             errors.append(f"Package '{pkg}' failed to load: {e}\n{traceback.format_exc()}")
+            # Purge the failed package and all its submodules from sys.modules to prevent circular import cascades
+            prefix = f"{pkg}."
+            to_del = [k for k in list(sys.modules.keys()) if k == pkg or k.startswith(prefix)]
+            for k in to_del:
+                del sys.modules[k]
 
     # Optional packages - test but do not fail core runtime if unavailable
     for pkg in ["torchaudio", "nagisa", "soynlp"]:
@@ -412,6 +490,190 @@ def find_system_python() -> Optional[str]:
     return None
 
 
+def get_pip_pyz_path() -> str:
+    """Returns the expected path to the standalone pip.pyz archive in the runtime base directory."""
+    return os.path.join(get_runtime_base_dir(), "pip.pyz")
+
+
+def get_pip_bootstrap_dir() -> str:
+    """Returns the directory for isolated pip bootstrap packages."""
+    return os.path.join(get_runtime_base_dir(), "pip_bootstrap")
+
+
+def get_pip_env(pkg_dir: Optional[str] = None) -> Dict[str, str]:
+    """Builds an environment dictionary with PYTHONPATH pointing to bootstrap pip and target package dirs."""
+    env = os.environ.copy()
+    python_paths: List[str] = []
+    
+    pip_boot = get_pip_bootstrap_dir()
+    if os.path.isdir(pip_boot):
+        python_paths.append(pip_boot)
+    if pkg_dir and os.path.isdir(pkg_dir) and pkg_dir not in python_paths:
+        python_paths.append(pkg_dir)
+        
+    if python_paths:
+        orig = env.get("PYTHONPATH", "")
+        combined = os.pathsep.join(python_paths)
+        env["PYTHONPATH"] = (combined + os.pathsep + orig) if orig else combined
+    return env
+
+
+def resolve_pip_command(
+    python_exe: str,
+    log_callback: Optional[Callable[[str], None]] = None
+) -> List[str]:
+    """
+    Resolves a working pip command invocation for the given Python executable.
+    Tries in order:
+    1. python_exe -m pip
+    2. python_exe -m ensurepip --default-pip
+    3. Cached isolated pip bootstrap in runtime directory
+    4. Bootstrapping pip via official get-pip.py from PyPA
+    5. Host system pip / pip3 CLI (if python version matches)
+    """
+    def _log(m: str):
+        if log_callback:
+            log_callback(m)
+
+    run_kwargs: Dict[str, Any] = {"capture_output": True, "text": True, "timeout": 6}
+    if sys.platform == "win32":
+        run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+    env = get_pip_env()
+
+    # 1. Check if python_exe -m pip works
+    try:
+        res = subprocess.run([python_exe, "-m", "pip", "--version"], env=env, **run_kwargs)
+        if res.returncode == 0 and "pip" in res.stdout.lower():
+            return [python_exe, "-m", "pip"]
+    except Exception:
+        pass
+
+    _log("Host Python is missing the 'pip' module. Attempting automated bootstrapping...")
+
+    # 2. Try ensurepip
+    try:
+        ensure_kwargs = dict(run_kwargs)
+        ensure_kwargs["timeout"] = 15
+        res = subprocess.run([python_exe, "-m", "ensurepip", "--default-pip"], env=env, **ensure_kwargs)
+        if res.returncode == 0:
+            res2 = subprocess.run([python_exe, "-m", "pip", "--version"], env=env, **run_kwargs)
+            if res2.returncode == 0:
+                _log("Successfully bootstrapped pip via ensurepip.")
+                return [python_exe, "-m", "pip"]
+    except Exception:
+        pass
+
+    # 3. Check for existing isolated pip bootstrap directory
+    pip_boot = get_pip_bootstrap_dir()
+    if os.path.isdir(os.path.join(pip_boot, "pip")):
+        env = get_pip_env()
+        try:
+            res = subprocess.run([python_exe, "-m", "pip", "--version"], env=env, **run_kwargs)
+            if res.returncode == 0:
+                _log(f"Using isolated pip bootstrap environment: {pip_boot}")
+                return [python_exe, "-m", "pip"]
+        except Exception:
+            pass
+
+    # 4. Bootstrap pip using get-pip.py from PyPA
+    get_pip_script = os.path.join(get_runtime_base_dir(), "get-pip.py")
+    if not os.path.isfile(get_pip_script) or os.path.getsize(get_pip_script) < 100000:
+        _log("Downloading standalone pip installer from PyPA (https://bootstrap.pypa.io/get-pip.py)...")
+        os.makedirs(os.path.dirname(get_pip_script), exist_ok=True)
+        downloaded = False
+        mirrors = [
+            "https://bootstrap.pypa.io/get-pip.py",
+            "https://raw.githubusercontent.com/pypa/get-pip/main/public/get-pip.py"
+        ]
+        for url in mirrors:
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "SubtitleGo-Installer/1.0"})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    data = resp.read()
+                    if len(data) > 100000:
+                        with open(get_pip_script, "wb") as f:
+                            f.write(data)
+                        downloaded = True
+                        break
+            except Exception as dl_err:
+                _log(f"Download mirror '{url}' returned error: {dl_err}")
+
+        if not downloaded:
+            _log("Could not download get-pip.py script from PyPA mirrors.")
+
+    if os.path.isfile(get_pip_script):
+        _log(f"Installing pip into isolated runtime directory: {pip_boot}...")
+        os.makedirs(pip_boot, exist_ok=True)
+        boot_cmd = [
+            python_exe, get_pip_script,
+            "--target", pip_boot,
+            "--no-setuptools",
+            "--no-wheel",
+            "--break-system-packages",
+            "--no-warn-script-location"
+        ]
+        try:
+            res = subprocess.run(boot_cmd, capture_output=True, text=True, timeout=120)
+            if res.returncode == 0:
+                env = get_pip_env()
+                res2 = subprocess.run([python_exe, "-m", "pip", "--version"], env=env, **run_kwargs)
+                if res2.returncode == 0:
+                    _log("Pip bootstrapping completed successfully.")
+                    return [python_exe, "-m", "pip"]
+            else:
+                _log(f"get-pip.py execution notice: {res.stderr or res.stdout}")
+        except Exception as boot_err:
+            _log(f"get-pip.py invocation error: {boot_err}")
+
+    # 5. Check if system pip3 / pip CLI can be used
+    for p_cli in ["pip3", "pip"]:
+        which_p = shutil.which(p_cli)
+        if which_p:
+            try:
+                res = subprocess.run([which_p, "--version"], **run_kwargs)
+                if res.returncode == 0:
+                    _log(f"Falling back to system {p_cli} executable: {which_p}")
+                    return [which_p]
+            except Exception:
+                pass
+
+    err_msg = (
+        "No working pip installer could be found or bootstrapped for Python.\n"
+        "On Debian/Ubuntu Linux, please install pip using:\n"
+        "    sudo apt update && sudo apt install -y python3-pip\n"
+        "On Fedora/RHEL Linux, use:\n"
+        "    sudo dnf install -y python3-pip\n"
+        "On Arch Linux, use:\n"
+        "    sudo pacman -S python-pip"
+    )
+    _log(f"ERROR: {err_msg}")
+    raise RuntimeError(err_msg)
+
+
+def get_pip_extra_install_flags(pip_cmd: List[str]) -> List[str]:
+    """
+    Returns extra flags like --break-system-packages and --no-warn-script-location
+    if supported by the pip invocation.
+    This prevents PEP 668 errors on Debian 12+ / Ubuntu 24.04+ when installing to custom targets.
+    """
+    extra: List[str] = []
+    run_kwargs: Dict[str, Any] = {"capture_output": True, "text": True, "timeout": 5}
+    if sys.platform == "win32":
+        run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    env = get_pip_env()
+    try:
+        res = subprocess.run(pip_cmd + ["help", "install"], env=env, **run_kwargs)
+        if res.returncode == 0:
+            if "--break-system-packages" in res.stdout:
+                extra.append("--break-system-packages")
+            if "--no-warn-script-location" in res.stdout:
+                extra.append("--no-warn-script-location")
+    except Exception:
+        pass
+    return extra
+
+
 def _run_pip_step(
     cmd: List[str],
     _log: Callable[[str], None],
@@ -426,9 +688,7 @@ def _run_pip_step(
     if sys.platform == "win32":
         popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-    env = os.environ.copy()
-    if pkg_dir and os.path.isdir(pkg_dir):
-        env["PYTHONPATH"] = pkg_dir + (os.pathsep + env["PYTHONPATH"] if "PYTHONPATH" in env else "")
+    env = get_pip_env(pkg_dir)
 
     p = subprocess.Popen(
         cmd,
@@ -440,6 +700,7 @@ def _run_pip_step(
         **popen_kwargs
     )
 
+    recent_logs: List[str] = []
     while True:
         if cancel_event and cancel_event.is_set():
             p.terminate()
@@ -451,12 +712,16 @@ def _run_pip_step(
         if line:
             cleaned = line.strip()
             if cleaned:
+                recent_logs.append(cleaned)
+                if len(recent_logs) > 30:
+                    recent_logs.pop(0)
                 _log(cleaned)
                 if progress_callback and any(w in cleaned for w in ["Collecting", "Downloading", "Installing", "Successfully installed"]):
                     progress_callback(cleaned[:80], base_pct + (scale_pct * 0.5))
 
     if p.returncode != 0:
-        raise RuntimeError(f"Pip command failed with exit code {p.returncode}. Please check network connection.")
+        err_tail = "\n".join(recent_logs[-8:]) if recent_logs else f"Exit code {p.returncode}"
+        raise RuntimeError(f"Pip command failed with exit code {p.returncode}:\n{err_tail}")
 
 
 def install_ai_runtime(
@@ -486,6 +751,11 @@ def install_ai_runtime(
     _log(f"Using host Python: {python_exe}")
     _log(f"Target runtime directory: {pkg_dir}")
     _log(f"Selected AI acceleration mode: {target_type.upper()}")
+
+    pip_cmd_base = resolve_pip_command(python_exe, log_callback=_log)
+    pip_extra_flags = get_pip_extra_install_flags(pip_cmd_base)
+    if pip_extra_flags:
+        _log(f"Detected additional pip install flags: {' '.join(pip_extra_flags)}")
 
     if progress_callback:
         progress_callback("Preparing AI Runtime environment...", 5.0)
@@ -521,41 +791,39 @@ def install_ai_runtime(
         if progress_callback:
             progress_callback(f"Downloading PyTorch {cuda_desc} runtime (~2.0 GB)...", 10.0)
         _log(f"Step 1/2: Installing PyTorch {cuda_desc} and NVIDIA CUDA runtime libraries...")
-        torch_cmd = [
-            python_exe, "-m", "pip", "install",
+        torch_cmd = pip_cmd_base + [
+            "install",
             "--target", pkg_dir,
             "--no-user",
             "--no-cache-dir",
             "--upgrade",
             "--index-url", cuda_index_url,
-        ] + extra_flags + ["torch", "torchaudio"]
+        ] + pip_extra_flags + extra_flags + ["torch", "torchaudio"]
         _run_pip_step(torch_cmd, _log, progress_callback, 10.0, 40.0, cancel_event, pkg_dir=pkg_dir)
     elif target_type == "cpu" and sys.platform != "darwin":
         if progress_callback:
             progress_callback("Downloading PyTorch CPU runtime (~200 MB)...", 10.0)
         _log("Step 1/2: Installing PyTorch CPU from pytorch.org...")
-        torch_cmd = [
-            python_exe, "-m", "pip", "install",
+        torch_cmd = pip_cmd_base + [
+            "install",
             "--target", pkg_dir,
             "--no-user",
             "--no-cache-dir",
             "--upgrade",
             "--index-url", "https://download.pytorch.org/whl/cpu",
-            "torch", "torchaudio"
-        ]
+        ] + pip_extra_flags + ["torch", "torchaudio"]
         _run_pip_step(torch_cmd, _log, progress_callback, 10.0, 40.0, cancel_event, pkg_dir=pkg_dir)
     else:  # mps or macOS standard PyPI (includes Metal MPS support)
         if progress_callback:
             desc = "Apple Silicon (Metal/MPS)" if sys.platform == "darwin" else "standard PyTorch"
             progress_callback(f"Downloading {desc} runtime (~250 MB)...", 10.0)
         _log(f"Step 1/2: Installing PyTorch from PyPI ({'macOS Apple Silicon / MPS' if sys.platform == 'darwin' else 'Standard'})...")
-        torch_cmd = [
-            python_exe, "-m", "pip", "install",
+        torch_cmd = pip_cmd_base + [
+            "install",
             "--target", pkg_dir,
             "--no-user",
             "--upgrade",
-            "torch", "torchaudio"
-        ]
+        ] + pip_extra_flags + ["torch", "torchaudio"]
         _run_pip_step(torch_cmd, _log, progress_callback, 10.0, 40.0, cancel_event, pkg_dir=pkg_dir)
 
     # Step 2: Install remaining AI packages from PyPI without overwriting PyTorch
@@ -585,11 +853,13 @@ def install_ai_runtime(
     else:
         extra_idx = []
 
-    deps_cmd = [
-        python_exe, "-m", "pip", "install",
+    deps_cmd = pip_cmd_base + [
+        "install",
         "--target", pkg_dir,
         "--no-user",
-    ] + extra_idx + common_pkgs
+        "--no-cache-dir",
+        "--upgrade",
+    ] + pip_extra_flags + extra_idx + common_pkgs
     _run_pip_step(deps_cmd, _log, progress_callback, 55.0, 35.0, cancel_event, pkg_dir=pkg_dir)
 
     # Re-initialize runtime environment and verify
