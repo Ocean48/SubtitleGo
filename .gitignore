@@ -43,7 +43,13 @@ models/*
 bin/*
 !bin/.gitkeep
 
+# Dynamic AI Runtime & Python Packages
+runtime/*
+!runtime/.gitkeep
+
 # Logs, Transcripts, and Subtitle Test Outputs
+logs/*
+!logs/.gitkeep
 *.log
 stt_transcription.txt
 audio.wav
