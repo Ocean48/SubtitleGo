@@ -77,6 +77,12 @@ class HeaderBar(QFrame):
         self.lbl_status.setObjectName("statusBadge")
         right_layout.addWidget(self.lbl_status)
 
+        self.btn_diag = QPushButton("Logs & Diag")
+        self.btn_diag.setProperty("class", "btnGhost")
+        self.btn_diag.setToolTip("Open System Diagnostics & Application Logs (logs/subtitlego.log)")
+        self.btn_diag.clicked.connect(self._open_diagnostics)
+        right_layout.addWidget(self.btn_diag)
+
         self.btn_shortcuts = QPushButton("Shortcuts")
         self.btn_shortcuts.setProperty("class", "btnGhost")
         self.btn_shortcuts.setToolTip("View keyboard shortcuts (Ctrl+/)")
@@ -90,6 +96,12 @@ class HeaderBar(QFrame):
         right_layout.addWidget(self.btn_theme)
 
         layout.addLayout(right_layout)
+
+    def _open_diagnostics(self):
+        from .diagnostics_dialog import DiagnosticsDialog
+        dlg = DiagnosticsDialog(self)
+        dlg.exec()
+        self.update_hardware_status()
 
     def _on_toggle_model(self):
         """Starts (loads) or Ends (unloads) the Qwen model in memory."""
@@ -121,7 +133,16 @@ class HeaderBar(QFrame):
 
     def _on_model_load_error(self, err_msg: str):
         self.sync_model_state()
-        QMessageBox.warning(self, "Model Load Error", f"Failed to load Qwen3-ASR model:\n{err_msg}")
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Critical)
+        box.setWindowTitle("Model Load Error")
+        box.setText("Failed to start or load Qwen3-ASR model.")
+        box.setInformativeText(f"{err_msg}\n\nAll details have been recorded to logs/subtitlego.log.")
+        btn_diag = box.addButton("View Diagnostics & Logs...", QMessageBox.ActionRole)
+        box.addButton("OK", QMessageBox.AcceptRole)
+        box.exec()
+        if box.clickedButton() == btn_diag:
+            self._open_diagnostics()
 
     def sync_model_state(self):
         """Synchronizes model button and status badge with current model instance."""
@@ -165,8 +186,9 @@ class HeaderBar(QFrame):
             mgr = ModelManager.get_instance()
             info = mgr.get_hardware_status()
             is_loaded = info.get("model_loaded", False)
+            dev = info.get("device", "cpu")
 
-            if info.get("cuda_available"):
+            if "cuda" in dev:
                 gpu_desc = f"GPU: {info['gpu_name']} {info['vram_gb']:.1f}GB" if info.get('vram_gb') else f"GPU: {info['gpu_name']}"
                 if is_loaded:
                     self.lbl_status.setText(f"[Active | {gpu_desc}]")
@@ -174,7 +196,7 @@ class HeaderBar(QFrame):
                 else:
                     self.lbl_status.setText(f"[Standby | {gpu_desc}]")
                     self.lbl_status.setProperty("class", "")
-            elif info.get("mps_available"):
+            elif dev == "mps":
                 ram_str = f" ({info['total_ram_gb']:.0f} GB Unified RAM)" if info.get('total_ram_gb') else ""
                 gpu_desc = f"Apple Silicon GPU{ram_str}"
                 if is_loaded:

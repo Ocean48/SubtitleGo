@@ -1,8 +1,11 @@
 import os
 import sys
 import gc
+import logging
 import threading
 from typing import List, Tuple, Optional, Dict, Any, Callable
+
+logger = logging.getLogger("SubtitleGo.ModelManager")
 
 # Fix nagisa implicit relative imports in frozen PyInstaller bundles (No module named 'prepro')
 try:
@@ -17,6 +20,11 @@ try:
 except Exception:
     pass
 
+from .runtime_manager import init_runtime_environment, is_runtime_installed, diagnose_runtime_environment
+
+# Initialize runtime paths (custom packages directory / CUDA DLLs)
+init_runtime_environment()
+
 # Safely import heavy AI runtime libraries at module load time on the main thread
 # to avoid C-extension dynamic loading race conditions in background QThreads.
 try:
@@ -29,6 +37,39 @@ except ImportError:
     torchaudio = None
     transformers = None
     Qwen3ASRModel = None
+
+
+def patch_qwen_asr_audio_loader():
+    """
+    Patches qwen_asr's audio loader to use soundfile directly instead of librosa/numba/llvmlite.
+    Eliminates WinError 206, eliminates Numba JIT warmup overhead, and provides faster C-level audio decoding across Windows, macOS, and Linux.
+    """
+    try:
+        import soundfile as sf
+        import numpy as np
+        import qwen_asr.inference.utils as q_utils
+
+        def fast_load_audio_any(x):
+            if isinstance(x, (tuple, list)) and len(x) == 2:
+                return x[0], x[1]
+            if isinstance(x, dict) and "array" in x:
+                return x["array"], x.get("sampling_rate", 16000)
+            if isinstance(x, np.ndarray):
+                return x, 16000
+            if isinstance(x, str):
+                data, sr = sf.read(x, dtype="float32")
+                if data.ndim > 1:
+                    data = data.T
+                return data, sr
+            return x
+
+        q_utils.load_audio_any = fast_load_audio_any
+        logger.info("Patched qwen_asr audio loader with soundfile backend.")
+    except Exception as e:
+        logger.debug(f"Could not patch qwen_asr audio loader: {e}")
+
+# Apply patch when module loads
+patch_qwen_asr_audio_loader()
 
 SUPPORTED_LANGUAGES = [
     "Auto Detect", "Chinese", "English", "Cantonese", "Japanese", "Korean", 
@@ -82,7 +123,8 @@ def is_model_downloaded() -> bool:
 
 def download_model_weights(
     target_dir: Optional[str] = None,
-    progress_callback: Optional[Callable[[str, float], None]] = None
+    progress_callback: Optional[Callable[[str, float], None]] = None,
+    log_callback: Optional[Callable[[str], None]] = None
 ) -> str:
     """
     Downloads Qwen3-ASR-1.7B model weights from Hugging Face Hub.
@@ -95,6 +137,14 @@ def download_model_weights(
     os.makedirs(target_dir, exist_ok=True)
     repo_id = "Qwen/Qwen3-ASR-1.7B"
 
+    def _log(msg: str):
+        if log_callback:
+            log_callback(msg)
+        print(f"[ModelManager] {msg}")
+
+    _log(f"Starting Qwen3-ASR model download from Hugging Face ({repo_id})...")
+    _log(f"Destination folder: {target_dir}")
+
     if progress_callback:
         progress_callback("Connecting to Hugging Face Hub...", 5.0)
 
@@ -105,6 +155,8 @@ def download_model_weights(
         local_dir_use_symlinks=False
     )
 
+    _log("Model weights downloaded and verified in destination directory.")
+
     if progress_callback:
         progress_callback("Download completed successfully.", 100.0)
 
@@ -114,8 +166,9 @@ def download_model_weights(
 def get_system_memory_info() -> Dict[str, Any]:
     """
     Detects system RAM and GPU VRAM across macOS (Apple Silicon UMA), Windows (CUDA/CPU), and Linux.
-    Returns dictionary with total_ram_gb, vram_gb, device_type, and hardware description.
+    Initializes runtime environment so that dynamically installed PyTorch CUDA binaries are detected.
     """
+    init_runtime_environment()
     total_ram_gb = 8.0
     try:
         import psutil
@@ -288,6 +341,7 @@ class ModelManager:
     def __init__(self):
         self.model = None
         self.device = "cpu"
+        self.preferred_device = "auto"
         self.dtype = None
         self.model_path = None
         self.is_loading = False
@@ -300,15 +354,129 @@ class ModelManager:
             cls._instance = ModelManager()
         return cls._instance
 
+    def refresh_hardware_detection(self):
+        """Forces runtime environment and hardware cache refresh."""
+        init_runtime_environment()
+        get_system_memory_info()
+
+    def get_available_devices(self) -> List[Tuple[str, str]]:
+        """
+        Returns list of available compute devices as (label, key).
+        E.g. [('Auto (NVIDIA GeForce RTX 5060 Ti)', 'auto'), ('NVIDIA GPU (CUDA)', 'cuda'), ('CPU Mode', 'cpu')]
+        """
+        self.refresh_hardware_detection()
+        mem = get_system_memory_info()
+        cuda_ok = mem.get("cuda_available", False)
+        mps_ok = mem.get("mps_available", False)
+        gpu_name = mem.get("gpu_name", "")
+        vram_gb = mem.get("vram_gb", 0.0)
+        ram_gb = mem.get("total_ram_gb", 8.0)
+
+        options: List[Tuple[str, str]] = []
+
+        if cuda_ok:
+            auto_label = f"Auto ({gpu_name} - {vram_gb:.1f}GB VRAM)"
+            options.append((auto_label, "auto"))
+            options.append((f"NVIDIA GPU (CUDA: {gpu_name})", "cuda"))
+        elif mps_ok:
+            auto_label = f"Auto (Apple Silicon MPS - {ram_gb:.0f}GB RAM)"
+            options.append((auto_label, "auto"))
+            options.append(("Apple Silicon GPU (MPS)", "mps"))
+        else:
+            auto_label = f"Auto (CPU Mode - {ram_gb:.0f}GB RAM)"
+            options.append((auto_label, "auto"))
+
+        options.append((f"CPU Mode (Compatible / Low Power - {ram_gb:.0f}GB RAM)", "cpu"))
+        return options
+
+    def set_preferred_device(self, device_choice: str) -> bool:
+        """
+        Sets user compute device preference ('auto', 'cuda', 'mps', 'cpu').
+        If the model is currently loaded in memory, hot-reloads it onto the newly selected device.
+        """
+        with self._lock:
+            self.preferred_device = device_choice.lower()
+            print(f"[ModelManager] Preferred device set to: '{self.preferred_device}'")
+
+            # If model is currently loaded, hot-reload on the new device
+            if self.model is not None:
+                print(f"[ModelManager] Hot-reloading active model onto {self.preferred_device}...")
+                current_path = self.model_path
+                current_bs = self.max_batch_size
+                self.unload_model()
+                self._load_model_internal(custom_path=current_path, max_batch_size=current_bs)
+                return True
+            return True
+
+    def resolve_target_device_and_dtype(self) -> Tuple[str, Any]:
+        """
+        Resolves the actual PyTorch device string and dtype to use,
+        taking preferred_device and real hardware availability into account.
+        """
+        init_runtime_environment()
+        import torch
+
+        pref = self.preferred_device.lower()
+        logger.info(f"Resolving target compute device (preference='{pref}')...")
+
+        # 1. Force CPU
+        if pref == "cpu":
+            logger.info("Preferred device is CPU. Selecting CPU mode.")
+            return "cpu", torch.float32
+
+        # 2. Force CUDA or Auto with CUDA
+        if pref in ("cuda", "cuda:0", "auto"):
+            if torch.cuda.is_available():
+                try:
+                    _test_t = torch.zeros(1, device="cuda:0")
+                    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+                    gpu_name = torch.cuda.get_device_name(0)
+                    logger.info(f"CUDA device verified: {gpu_name} (dtype={dtype})")
+                    return "cuda:0", dtype
+                except Exception as cuda_err:
+                    logger.warning(f"CUDA validation test failed ({cuda_err}), falling back.")
+                    if pref != "auto":
+                        raise RuntimeError(f"Requested CUDA device failed validation: {cuda_err}")
+            elif pref != "auto":
+                diag = diagnose_runtime_environment()
+                reasons = "; ".join(diag.get("cuda_diagnosis_notes", [])) or "No CUDA GPU detected or CUDA runtime missing."
+                err_msg = f"CUDA GPU is not available on this system. Details: {reasons}"
+                logger.error(err_msg)
+                raise RuntimeError(err_msg)
+
+        # 3. Force MPS or Auto with MPS
+        if pref in ("mps", "auto"):
+            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                try:
+                    _test_t = torch.zeros(1, device="mps")
+                    logger.info("Apple Silicon MPS verified (dtype=float16).")
+                    return "mps", torch.float16
+                except Exception as mps_err:
+                    logger.warning(f"MPS validation test failed ({mps_err}), falling back.")
+                    if pref != "auto":
+                        raise RuntimeError(f"Requested Apple Silicon MPS device failed validation: {mps_err}")
+            elif pref != "auto":
+                raise RuntimeError("Apple Silicon MPS is not available on this system.")
+
+        # 4. Default fallback: CPU
+        logger.info("Defaulting to CPU mode (torch.float32).")
+        return "cpu", torch.float32
+
     def get_hardware_status(self) -> Dict[str, Any]:
         """Returns current hardware capability (CUDA GPU vs Apple Silicon MPS vs CPU)."""
         mem_info = get_system_memory_info()
         default_device = mem_info["device_type"]
 
+        # Resolve effective device
+        eff_dev = self.device if self.model else (
+            "cpu" if self.preferred_device == "cpu" else default_device
+        )
+
         return {
             "cuda_available": mem_info["cuda_available"],
             "mps_available": mem_info["mps_available"],
-            "device": self.device if self.model else default_device,
+            "device": eff_dev,
+            "preferred_device": self.preferred_device,
             "gpu_name": mem_info["gpu_name"],
             "vram_gb": mem_info["vram_gb"],
             "total_ram_gb": mem_info["total_ram_gb"],
@@ -319,26 +487,62 @@ class ModelManager:
 
     def load_model_on_device(self, target_device: str, max_batch_size: Optional[int] = None) -> bool:
         """Forces loading model onto a specific device (e.g. 'cpu', 'mps', 'cuda:0')."""
-        self.unload_model()
-        import torch
-        from qwen_asr import Qwen3ASRModel
+        self.set_preferred_device(target_device)
+        return self.load_model(max_batch_size=max_batch_size)
 
-        self.device = target_device
-        self.dtype = torch.float32 if target_device == "cpu" else torch.float16
-        model_path = self.model_path or find_model_path() or "Qwen/Qwen3-ASR-1.7B"
-        self.model_path = model_path
+    def _load_model_internal(
+        self,
+        custom_path: Optional[str] = None,
+        max_batch_size: Optional[int] = None,
+        progress_callback: Optional[Callable[[str], None]] = None
+    ) -> bool:
+        """Internal model loader without re-acquiring self._lock."""
+        self.is_loading = True
+        try:
+            init_runtime_environment()
+            import torch
+            from qwen_asr import Qwen3ASRModel
 
-        rec = get_recommended_settings()
-        self.max_batch_size = max_batch_size or rec["recommended_batch_size"]
+            # Ensure audio loader patch is active
+            patch_qwen_asr_audio_loader()
 
-        self.model = Qwen3ASRModel.from_pretrained(
-            model_path,
-            dtype=self.dtype,
-            device_map=self.device,
-            max_inference_batch_size=max(self.max_batch_size, 4),
-            max_new_tokens=512,
-        )
-        return True
+            target_device, target_dtype = self.resolve_target_device_and_dtype()
+            self.device = target_device
+            self.dtype = target_dtype
+
+            if "cuda" in self.device:
+                logger.info(f"Engaging {self.device} ({torch.cuda.get_device_name(0)}) with dtype {self.dtype}")
+            elif self.device == "mps":
+                logger.info(f"Engaging Apple Silicon MPS with dtype {self.dtype}")
+            else:
+                logger.info(f"Engaging CPU Mode with dtype {self.dtype}")
+
+            model_path = custom_path or find_model_path() or "Qwen/Qwen3-ASR-1.7B"
+            self.model_path = model_path
+            logger.info(f"Loading weights from model path: {model_path}")
+
+            if progress_callback:
+                progress_callback(f"Loading Qwen3-ASR model ({self.device})...")
+
+            rec = get_recommended_settings()
+            self.max_batch_size = max_batch_size or rec["recommended_batch_size"]
+
+            self.model = Qwen3ASRModel.from_pretrained(
+                model_path,
+                dtype=self.dtype,
+                device_map=self.device,
+                max_inference_batch_size=max(self.max_batch_size, 4),
+                max_new_tokens=512,
+            )
+            logger.info(f"Qwen3-ASR model loaded successfully on {self.device}.")
+            return True
+        except Exception as e:
+            import traceback
+            err_trace = traceback.format_exc()
+            logger.error(f"Failed to load Qwen3-ASR model:\n{err_trace}")
+            raise
+        finally:
+            self.is_loading = False
 
     def load_model(
         self,
@@ -350,57 +554,11 @@ class ModelManager:
         with self._lock:
             if self.model is not None:
                 return True
-
-            self.is_loading = True
-            try:
-                import torch
-                from qwen_asr import Qwen3ASRModel
-
-                if torch.cuda.is_available():
-                    try:
-                        _test_t = torch.zeros(1, device="cuda:0")
-                        self.device = "cuda:0"
-                        self.dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-                    except Exception as cuda_err:
-                        print(f"CUDA device check failed ({cuda_err}), falling back to CPU.")
-                        self.device = "cpu"
-                        self.dtype = torch.float32
-                elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                    try:
-                        _test_t = torch.zeros(1, device="mps")
-                        self.device = "mps"
-                        self.dtype = torch.float16
-                    except Exception as mps_err:
-                        print(f"MPS device check failed ({mps_err}), falling back to CPU.")
-                        self.device = "cpu"
-                        self.dtype = torch.float32
-                else:
-                    self.device = "cpu"
-                    self.dtype = torch.float32
-
-                model_path = custom_path or find_model_path() or "Qwen/Qwen3-ASR-1.7B"
-                self.model_path = model_path
-
-                if progress_callback:
-                    progress_callback(f"Loading Qwen3-ASR model ({self.device})...")
-
-                rec = get_recommended_settings()
-                self.max_batch_size = max_batch_size or rec["recommended_batch_size"]
-
-                self.model = Qwen3ASRModel.from_pretrained(
-                    model_path,
-                    dtype=self.dtype,
-                    device_map=self.device,
-                    max_inference_batch_size=max(self.max_batch_size, 4),
-                    max_new_tokens=512,
-                )
-                return True
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                raise
-            finally:
-                self.is_loading = False
+            return self._load_model_internal(
+                custom_path=custom_path,
+                max_batch_size=max_batch_size,
+                progress_callback=progress_callback
+            )
 
     def unload_model(self):
         """Unloads model to release GPU/CPU memory."""

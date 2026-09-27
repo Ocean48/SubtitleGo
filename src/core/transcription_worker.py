@@ -1,8 +1,11 @@
 import os
 import time
+import logging
 import tempfile
 from typing import Optional, Dict, Any, List
 from PySide6.QtCore import QThread, Signal
+
+logger = logging.getLogger("SubtitleGo.TranscriptionWorker")
 
 from .audio_processor import (
     extract_audio_to_wav,
@@ -223,8 +226,8 @@ class TranscriptionWorker(QThread):
         except Exception as e:
             if not self._is_cancelled:
                 import traceback
-                print(f"\n[TranscriptionWorker] Error processing {self.filename}: {e}")
-                traceback.print_exc()
+                err_trace = traceback.format_exc()
+                logger.error(f"Error processing {self.filename}: {e}\n{err_trace}")
 
                 err_str = str(e)
                 if any(k in err_str.lower() for k in ["insufficient memory", "out of memory", "command buffer", "kiogpucommandbuffercallbackerroroutofmemory"]):

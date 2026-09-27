@@ -40,6 +40,7 @@ def get_default_platform_tag() -> str:
 
 def build_and_package(
     include_models: bool = False,
+    bundle_ai: bool = False,
     create_zip: bool = True,
     custom_version: str = None,
     platform_tag: str = None,
@@ -52,6 +53,7 @@ def build_and_package(
     print(f"Building {__title__}")
     print(f"Version:  v{version}")
     print(f"Platform: {plat_tag}")
+    print(f"AI Engine: {'Static Bundled (Legacy)' if bundle_ai else 'Dynamic First-Launch Setup (~80 MB Lean)'}")
     print(f"Models:   {'Bundled (Offline mode)' if include_models else 'Externalized (Standard mode)'}")
     print("========================================")
 
@@ -61,10 +63,16 @@ def build_and_package(
 
     # 1. Run PyInstaller
     if not skip_pyinstaller:
+        env = os.environ.copy()
+        if bundle_ai:
+            env["SUBTITLE_STUDIO_BUNDLE_AI"] = "1"
+        else:
+            env["SUBTITLE_STUDIO_BUNDLE_AI"] = "0"
+
         cmd = [sys.executable, "-m", "PyInstaller", "--clean", "-y", spec_file]
         print(f"Executing PyInstaller command: {' '.join(cmd)}")
 
-        res = subprocess.run(cmd, cwd=root_dir)
+        res = subprocess.run(cmd, cwd=root_dir, env=env)
         if res.returncode != 0:
             print("PyInstaller build failed.")
             sys.exit(1)
@@ -100,9 +108,10 @@ def build_and_package(
                     os.chmod(d, 0o755)
         print("FFmpeg binaries bundled.")
 
-    # 3. Handle model weights
+    # 3. Handle model weights & logs directory
     target_models = os.path.join(dist_app_dir, "models")
     os.makedirs(target_models, exist_ok=True)
+    os.makedirs(os.path.join(dist_app_dir, "logs"), exist_ok=True)
 
     if include_models:
         local_models = os.path.join(root_dir, "models", "Qwen3-ASR-1.7B")
@@ -186,6 +195,11 @@ if __name__ == "__main__":
         help="Bundle local model weights into distribution (offline release)",
     )
     parser.add_argument(
+        "--bundle-ai",
+        action="store_true",
+        help="Bundle full PyTorch AI runtime inside PyInstaller binary (large ~6GB release)",
+    )
+    parser.add_argument(
         "--no-zip",
         action="store_true",
         help="Skip creating the release .zip archive",
@@ -212,6 +226,7 @@ if __name__ == "__main__":
 
     build_and_package(
         include_models=args.include_models,
+        bundle_ai=args.bundle_ai,
         create_zip=not args.no_zip,
         custom_version=args.version,
         platform_tag=args.platform,

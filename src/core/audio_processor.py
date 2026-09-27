@@ -83,7 +83,26 @@ def extract_audio_to_wav(input_path: str, output_path: str, sample_rate: int = 1
     except Exception:
         pass
 
-    # Fallback via torchaudio / soundfile
+    # Fallback via soundfile / scipy / torchaudio
+    sf = _get_soundfile()
+    if sf:
+        try:
+            data, sr = sf.read(input_path, dtype="float32")
+            if data.ndim > 1:
+                import numpy as np
+                data = np.mean(data, axis=1)
+            if sr != sample_rate:
+                import scipy.signal
+                num_samples = int(len(data) * float(sample_rate) / float(sr))
+                data = scipy.signal.resample(data, num_samples)
+            import numpy as np
+            # Convert float32 [-1, 1] to PCM 16-bit
+            scaled = np.int16(np.clip(data, -1.0, 1.0) * 32767)
+            sf.write(output_path, scaled, sample_rate, subtype="PCM_16")
+            return True
+        except Exception:
+            pass
+
     torchaudio = _get_torchaudio()
     torch = _get_torch()
     if torchaudio and torch:
@@ -98,25 +117,6 @@ def extract_audio_to_wav(input_path: str, output_path: str, sample_rate: int = 1
             return True
         except Exception:
             pass
-
-    sf = _get_soundfile()
-    if sf and torch and torchaudio:
-        try:
-            data, sr = sf.read(input_path, dtype="float32")
-            waveform = torch.from_numpy(data)
-            if waveform.ndim == 1:
-                waveform = waveform.unsqueeze(0)
-            else:
-                waveform = waveform.t()
-            if waveform.shape[0] > 1:
-                waveform = torch.mean(waveform, dim=0, keepdim=True)
-            if sr != sample_rate:
-                resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=sample_rate)
-                waveform = resampler(waveform)
-            torchaudio.save(output_path, waveform, sample_rate)
-            return True
-        except Exception as final_e:
-            raise RuntimeError(f"Failed to extract audio from {input_path}: {final_e}")
 
     raise RuntimeError(f"Failed to extract audio using FFmpeg and fallback libraries from {input_path}")
 

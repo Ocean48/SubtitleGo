@@ -9,11 +9,13 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Signal
 
 from ...core.model_manager import (
+    ModelManager,
     SUPPORTED_LANGUAGES,
     is_model_downloaded,
     get_recommended_settings,
     get_system_memory_info
 )
+from .setup_wizard_dialog import SetupWizardDialog
 from .model_download_dialog import ModelDownloadDialog
 
 
@@ -56,6 +58,16 @@ class SettingsPanel(QWidget):
                 self.cb_language.addItem(lang, lang)
         self.cb_language.currentIndexChanged.connect(self.sig_settings_changed)
         cp_layout.addWidget(self.cb_language)
+
+        # Compute Device Selection (Auto / GPU / CPU)
+        lbl_dev = QLabel("Compute Device (AI Processor)")
+        lbl_dev.setStyleSheet("font-weight: 600; font-size: 12px; margin-top: 4px;")
+        cp_layout.addWidget(lbl_dev)
+
+        self.cb_device = QComboBox()
+        self._populate_device_options()
+        self.cb_device.currentIndexChanged.connect(self._on_device_changed)
+        cp_layout.addWidget(self.cb_device)
 
         # Auto-save Checkbox
         self.chk_autosave = QCheckBox("Auto-save .srt & .vtt to media directory")
@@ -180,9 +192,9 @@ class SettingsPanel(QWidget):
         adv_layout.addLayout(row3)
 
         # Hardware Info Note
-        lbl_mem_info = QLabel(f"Hardware Profile: {self.rec_settings['memory_label']}")
-        lbl_mem_info.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 500;")
-        adv_layout.addWidget(lbl_mem_info)
+        self.lbl_mem_info = QLabel(f"Hardware Profile: {self.rec_settings['memory_label']}")
+        self.lbl_mem_info.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 500;")
+        adv_layout.addWidget(self.lbl_mem_info)
 
         # Utility Buttons Row
         btn_row = QHBoxLayout()
@@ -194,11 +206,17 @@ class SettingsPanel(QWidget):
         self.btn_toggle_model.clicked.connect(self.sig_toggle_model)
         btn_row.addWidget(self.btn_toggle_model)
         
-        self.btn_download_model = QPushButton("Model Weights...")
+        self.btn_download_model = QPushButton("AI Setup & Models...")
         self.btn_download_model.setProperty("class", "btnSecondary")
-        self.btn_download_model.setToolTip("Download or verify local AI model weights")
-        self.btn_download_model.clicked.connect(self._open_model_dialog)
+        self.btn_download_model.setToolTip("Download, verify, or reinstall AI engine and speech models")
+        self.btn_download_model.clicked.connect(self._open_setup_dialog)
         btn_row.addWidget(self.btn_download_model)
+
+        self.btn_diagnostics = QPushButton("Logs & Diag...")
+        self.btn_diagnostics.setProperty("class", "btnSecondary")
+        self.btn_diagnostics.setToolTip("View system diagnostics, CUDA status, and logs/subtitlego.log")
+        self.btn_diagnostics.clicked.connect(self._open_diagnostics_dialog)
+        btn_row.addWidget(self.btn_diagnostics)
 
         self.btn_purge_temp = QPushButton("Clear Temp Audio")
         self.btn_purge_temp.setProperty("class", "btnSecondary")
@@ -213,6 +231,37 @@ class SettingsPanel(QWidget):
 
         layout.addWidget(self.grp_advanced)
         layout.addStretch()
+
+    def _populate_device_options(self):
+        """Populates compute device dropdown with detected options."""
+        mgr = ModelManager.get_instance()
+        devices = mgr.get_available_devices()
+        self.cb_device.blockSignals(True)
+        self.cb_device.clear()
+        
+        pref = mgr.preferred_device.lower()
+        selected_idx = 0
+        for idx, (label, key) in enumerate(devices):
+            self.cb_device.addItem(label, key)
+            if key == pref:
+                selected_idx = idx
+                
+        self.cb_device.setCurrentIndex(selected_idx)
+        self.cb_device.blockSignals(False)
+
+    def _on_device_changed(self):
+        """Handles manual user device change (Auto / GPU / CPU)."""
+        dev_key = self.cb_device.currentData() or "auto"
+        mgr = ModelManager.get_instance()
+        mgr.set_preferred_device(dev_key)
+
+        # Refresh hardware recommendations and label
+        self.rec_settings = get_recommended_settings()
+        if hasattr(self, "lbl_mem_info"):
+            self.lbl_mem_info.setText(f"Hardware Profile: {self.rec_settings['memory_label']}")
+
+        self.sync_model_state()
+        self.sig_settings_changed.emit()
 
     def sync_model_state(self):
         """Synchronizes model button in settings with current model instance state."""
@@ -231,9 +280,22 @@ class SettingsPanel(QWidget):
         self.btn_toggle_model.style().unpolish(self.btn_toggle_model)
         self.btn_toggle_model.style().polish(self.btn_toggle_model)
 
-    def _open_model_dialog(self):
-        dlg = ModelDownloadDialog(self)
+    def _open_setup_dialog(self):
+        dlg = SetupWizardDialog(self)
+        if dlg.exec() == SetupWizardDialog.Accepted:
+            self._populate_device_options()
+            self.rec_settings = get_recommended_settings()
+            if hasattr(self, "lbl_mem_info"):
+                self.lbl_mem_info.setText(f"Hardware Profile: {self.rec_settings['memory_label']}")
+            self.sync_model_state()
+            self.sig_settings_changed.emit()
+
+    def _open_diagnostics_dialog(self):
+        from .diagnostics_dialog import DiagnosticsDialog
+        dlg = DiagnosticsDialog(self)
         dlg.exec()
+        self._populate_device_options()
+        self.sync_model_state()
 
     def _purge_temp_cache(self):
         temp_dir = tempfile.gettempdir()

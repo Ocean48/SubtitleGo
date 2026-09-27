@@ -359,6 +359,7 @@ class MainWindow(QMainWindow):
         self.header_bar.sig_shortcuts_clicked.connect(self._show_shortcuts_dialog)
         self.header_bar.sig_model_status_changed.connect(lambda _: self.settings_panel.sync_model_state())
         self.settings_panel.sig_toggle_model.connect(self.header_bar._on_toggle_model)
+        self.settings_panel.sig_settings_changed.connect(self.header_bar.update_hardware_status)
 
         # Queue events
         self.queue_list.sig_item_selected.connect(self._on_item_selected)
@@ -409,15 +410,34 @@ class MainWindow(QMainWindow):
     def _on_item_error(self, file_id: str, error_msg: str):
         if self.active_file_id == file_id:
             self.lbl_meta_time.setText(f"Status: Error - {error_msg}")
+
+        # Show error pop-up with direct link to Diagnostics & Logs
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+
         if "out of memory" in error_msg.lower() or "insufficient memory" in error_msg.lower() or "command buffer" in error_msg.lower():
-            QMessageBox.warning(
-                self,
-                "GPU Out of Memory (MPS)",
-                f"Transcription encountered GPU memory exhaustion:\n\n{error_msg}\n\n"
+            box.setWindowTitle("GPU Memory Warning")
+            box.setText("Transcription encountered GPU memory exhaustion.")
+            box.setInformativeText(
+                f"{error_msg}\n\n"
                 "Recommendations:\n"
                 "1. Set 'Parallel Worker Threads' to 1 in Settings.\n"
-                "2. SubtitleGo will automatically retry single items or fall back to CPU."
+                "2. Switch to CPU Mode or lower Batch Size in Settings.\n\n"
+                "Check logs/subtitlego.log for full details."
             )
+        else:
+            box.setWindowTitle("Transcription Error")
+            box.setText("An error occurred during transcription processing.")
+            box.setInformativeText(f"{error_msg}\n\nFull stack trace and runtime logs have been saved to logs/subtitlego.log.")
+
+        btn_diag = box.addButton("View Diagnostics & Logs...", QMessageBox.ActionRole)
+        box.addButton("OK", QMessageBox.AcceptRole)
+        box.exec()
+
+        if box.clickedButton() == btn_diag:
+            from .widgets.diagnostics_dialog import DiagnosticsDialog
+            dlg = DiagnosticsDialog(self)
+            dlg.exec()
 
     def _on_item_selected(self, file_id: str):
         if file_id not in self.queue_mgr.items:
