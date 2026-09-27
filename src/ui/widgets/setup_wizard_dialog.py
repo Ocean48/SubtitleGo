@@ -95,6 +95,10 @@ class SetupWorker(QThread):
                     progress_callback=model_progress_cb,
                     log_callback=model_log_cb
                 )
+
+                if not is_model_downloaded():
+                    raise RuntimeError("Model download completed but weights failed integrity check.")
+
                 self._emit_log("Stage 2 completed: Model weights verified successfully.")
 
             if self.cancel_event.is_set():
@@ -381,6 +385,10 @@ class SetupWizardDialog(QDialog):
         self.progress_bar.setValue(int(pct))
 
     def _on_finished(self):
+        if not is_model_downloaded():
+            self._on_error("Model weights verification failed. Some files may be incomplete.")
+            return
+
         self.progress_bar.setValue(100)
         self.lbl_stage.setText("Setup Completed Successfully!")
         self.lbl_status.setText("All AI components and speech models are ready.")

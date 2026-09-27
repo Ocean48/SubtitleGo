@@ -1,5 +1,16 @@
 import os
 import sys
+import multiprocessing
+
+# Critical for PyInstaller frozen executables on macOS, Windows, and Linux:
+# Intercept spawned worker processes (from PyTorch, Tokenizers, Multiprocessing)
+# to prevent duplicate GUI windows, repeated setups, or background subprocess crashes.
+multiprocessing.freeze_support()
+
+# Disable tokenizers fork parallelism warnings and enforce clean threading defaults
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
 
 # Ensure src directory is in sys.path
 sys_path_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -92,8 +103,7 @@ def main():
         dlg = SetupWizardDialog()
         res = dlg.exec()
         if res != SetupWizardDialog.Accepted and (not is_runtime_installed() or not is_model_downloaded()):
-            logger.warning("Setup cancelled or incomplete. Exiting application.")
-            sys.exit(0)
+            logger.warning("Setup incomplete. Continuing with manual setup accessible in settings.")
 
     # Re-initialize runtime environment paths after setup wizard completes
     init_runtime_environment()

@@ -91,59 +91,140 @@ def get_base_dir() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
+def _is_valid_model_dir(dir_path: str) -> bool:
+    """
+    Validates whether a directory contains fully downloaded and intact Qwen3-ASR model weights.
+    Requires config.json AND actual .safetensors / .bin weights with minimum size threshold (>1.0 GB).
+    Prevents premature startup when only metadata/config has downloaded.
+    """
+    if not dir_path or not os.path.isdir(dir_path):
+        return False
+
+    config_path = os.path.join(dir_path, "config.json")
+    if not os.path.isfile(config_path):
+        return False
+
+    # Check for weight files (safetensors or bin)
+    weight_files = []
+    try:
+        for f in os.listdir(dir_path):
+            if f.endswith(".safetensors") or f.endswith(".bin"):
+                fp = os.path.join(dir_path, f)
+                if os.path.isfile(fp):
+                    weight_files.append(fp)
+    except Exception:
+        return False
+
+    if not weight_files:
+        return False
+
+    # Check total size of weight files (Qwen3-ASR-1.7B is ~3.4 GB, minimum threshold is 1.0 GB)
+    try:
+        total_size = sum(os.path.getsize(fp) for fp in weight_files)
+        if total_size < (1024 * 1024 * 1024):  # < 1 GB means incomplete download
+            return False
+    except Exception:
+        return False
+
+    return True
+
+
+def get_candidate_model_dirs() -> List[str]:
+    """
+    Returns candidate model weight search directories across macOS, Windows, and Linux.
+    """
+    candidates = []
+    base_dir = get_base_dir()
+    
+    # 1. Local application folder (alongside executable / portable)
+    candidates.append(os.path.abspath(os.path.join(base_dir, "models", "Qwen3-ASR-1.7B")))
+    candidates.append(os.path.abspath(os.path.join(base_dir, "models")))
+
+    # 2. Platform user data directory
+    if sys.platform == "darwin":
+        candidates.append(os.path.abspath(os.path.expanduser("~/Library/Application Support/SubtitleGo/models/Qwen3-ASR-1.7B")))
+        candidates.append(os.path.abspath(os.path.expanduser("~/Library/Application Support/SubtitleStudio/models/Qwen3-ASR-1.7B")))
+    elif sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA", "")
+        if local_app_data:
+            candidates.append(os.path.abspath(os.path.join(local_app_data, "SubtitleGo", "models", "Qwen3-ASR-1.7B")))
+            candidates.append(os.path.abspath(os.path.join(local_app_data, "SubtitleStudio", "models", "Qwen3-ASR-1.7B")))
+        home_appdata = os.path.join(os.path.expanduser("~"), "AppData", "Local", "SubtitleGo", "models", "Qwen3-ASR-1.7B")
+        if home_appdata not in candidates:
+            candidates.append(os.path.abspath(home_appdata))
+    else:
+        candidates.append(os.path.abspath(os.path.expanduser("~/.local/share/subtitlego/models/Qwen3-ASR-1.7B")))
+        candidates.append(os.path.abspath(os.path.expanduser("~/.local/share/subtitlestudio/models/Qwen3-ASR-1.7B")))
+
+    # 3. Hugging Face Hub cache directory
+    hf_hub_dir = os.path.expanduser("~/.cache/huggingface/hub/models--Qwen--Qwen3-ASR-1.7B")
+    if os.path.isdir(hf_hub_dir):
+        candidates.append(os.path.abspath(hf_hub_dir))
+        snapshots_dir = os.path.join(hf_hub_dir, "snapshots")
+        if os.path.isdir(snapshots_dir):
+            try:
+                for snap in os.listdir(snapshots_dir):
+                    snap_path = os.path.join(snapshots_dir, snap)
+                    if os.path.isdir(snap_path):
+                        candidates.append(os.path.abspath(snap_path))
+            except Exception:
+                pass
+
+    return candidates
+
+
 def get_model_dir() -> str:
-    """Returns the standard local model directory."""
-    return os.path.join(get_base_dir(), "models", "Qwen3-ASR-1.7B")
+    """
+    Returns the target directory for storing Qwen3-ASR-1.7B model weights.
+    Prefers local 'models' folder if writable; otherwise uses User Application Support / AppData.
+    """
+    # If valid weights already exist anywhere, return their directory
+    existing = find_model_path()
+    if existing:
+        return existing
+
+    base_dir = get_base_dir()
+    local_target = os.path.join(base_dir, "models", "Qwen3-ASR-1.7B")
+
+    # On macOS, if inside .app bundle, do not write inside bundle; use Application Support
+    is_mac_bundle = sys.platform == "darwin" and getattr(sys, "frozen", False) and ".app" in base_dir
+    if not is_mac_bundle:
+        try:
+            os.makedirs(os.path.dirname(local_target), exist_ok=True)
+            test_file = os.path.join(os.path.dirname(local_target), ".write_test")
+            with open(test_file, "w") as f:
+                f.write("ok")
+            os.remove(test_file)
+            return local_target
+        except Exception:
+            pass
+
+    # User Application Data directory fallback
+    if sys.platform == "darwin":
+        user_dir = os.path.expanduser("~/Library/Application Support/SubtitleGo/models/Qwen3-ASR-1.7B")
+    elif sys.platform == "win32":
+        user_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "SubtitleGo", "models", "Qwen3-ASR-1.7B")
+    else:
+        user_dir = os.path.expanduser("~/.local/share/subtitlego/models/Qwen3-ASR-1.7B")
+
+    os.makedirs(user_dir, exist_ok=True)
+    return user_dir
 
 
 def find_model_path() -> Optional[str]:
     """
-    Finds the path to local Qwen3-ASR model weights.
-    Returns path string if valid model files exist and weights are complete (>1.5 GB), else None.
+    Finds the path to verified local Qwen3-ASR model weights.
+    Returns directory path string if valid model files exist, else None.
     """
-    candidates = [
-        get_model_dir(),
-        os.path.expanduser("~/.cache/huggingface/hub/models--Qwen--Qwen3-ASR-1.7B")
-    ]
-
-    for c in candidates:
-        if not os.path.exists(c):
-            continue
-
-        check_dirs = [c]
-        snapshots_dir = os.path.join(c, "snapshots")
-        if os.path.isdir(snapshots_dir):
-            try:
-                for s in os.listdir(snapshots_dir):
-                    snap_path = os.path.join(snapshots_dir, s)
-                    if os.path.isdir(snap_path):
-                        check_dirs.append(snap_path)
-            except Exception:
-                pass
-
-        for target_dir in check_dirs:
-            if os.path.isdir(target_dir):
-                config_file = os.path.join(target_dir, "config.json")
-                if os.path.exists(config_file):
-                    try:
-                        weight_files = [
-                            os.path.join(target_dir, f) for f in os.listdir(target_dir)
-                            if (f.endswith(".safetensors") or f.endswith(".bin") or f.endswith(".pt"))
-                            and not f.endswith(".incomplete")
-                        ]
-                        if weight_files:
-                            total_weight_size = sum(os.path.getsize(f) for f in weight_files if os.path.isfile(f))
-                            # Qwen3-ASR-1.7B weights are ~3.4 GB. Ensure complete download (> 1.5 GB).
-                            if total_weight_size > 1.5 * 1024 * 1024 * 1024:
-                                return os.path.abspath(target_dir)
-                    except Exception:
-                        pass
+    for c in get_candidate_model_dirs():
+        if _is_valid_model_dir(c):
+            return os.path.abspath(c)
 
     return None
 
 
 def is_model_downloaded() -> bool:
-    """Returns True if local model weights are present."""
+    """Returns True if verified local model weights are present and intact."""
     p = find_model_path()
     return p is not None and os.path.isdir(p)
 
