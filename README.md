@@ -1,6 +1,6 @@
 # SubtitleGo (Subtitle Studio)
 
-[![GitHub Release](https://img.shields.io/github/v/release/Ocean48/SubtitleGo?color=38bdf8)](https://github.com/Ocean48/SubtitleGo/releases)
+[![GitHub Release](https://img.shields.io/github/v/release/Ocean48/SubtitleGo?include_prereleases&color=38bdf8)](https://github.com/Ocean48/SubtitleGo/releases)
 [![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey)](https://github.com/Ocean48/SubtitleGo)
 [![GUI Framework](https://img.shields.io/badge/GUI-PySide6%20(Qt)-green)](https://wiki.qt.io/Qt_for_Python)
