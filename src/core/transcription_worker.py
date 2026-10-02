@@ -41,7 +41,9 @@ class TranscriptionWorker(QThread):
         prompt: Optional[str] = None,
         max_segment_length: float = 4.5,
         min_segment_length: float = 0.25,
-        silence_thresh_db: float = -36.0,
+        silence_thresh_db: float = -38.0,
+        max_speech_chunk_duration: float = 14.0,
+        boundary_padding_s: float = 0.25,
         batch_size: Optional[int] = None,
         parent=None
     ):
@@ -54,6 +56,8 @@ class TranscriptionWorker(QThread):
         self.max_segment_length = max_segment_length
         self.min_segment_length = min_segment_length
         self.silence_thresh_db = silence_thresh_db
+        self.max_speech_chunk_duration = max_speech_chunk_duration
+        self.boundary_padding_s = boundary_padding_s
         self.batch_size = batch_size
         self._is_cancelled = False
 
@@ -93,9 +97,10 @@ class TranscriptionWorker(QThread):
 
             time_intervals = segment_audio_smart(
                 converted_wav,
-                max_segment_duration=self.max_segment_length,
+                max_segment_duration=self.max_speech_chunk_duration,
                 min_segment_duration=self.min_segment_length,
-                silence_thresh_db=self.silence_thresh_db
+                silence_thresh_db=self.silence_thresh_db,
+                boundary_padding_s=self.boundary_padding_s
             )
             if not time_intervals:
                 time_intervals = [(0.0, duration)]

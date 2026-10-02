@@ -62,11 +62,31 @@ def get_audio_duration_seconds(wav_path: str) -> float:
 def extract_audio_to_wav(input_path: str, output_path: str, sample_rate: int = 16000) -> bool:
     """
     Extracts audio from video or audio file and converts it to mono 16kHz 16-bit PCM WAV using ffmpeg.
-    Falls back to torchaudio / soundfile if ffmpeg is unavailable.
+    Applies audio conditioning: PTS sync (aresample), speech bandpass (120Hz-4000Hz),
+    and dynamic audio normalization (dynaudnorm) to normalize volume across whispers and loud speech.
+    Falls back to unconditioned ffmpeg or torchaudio / soundfile if filters or ffmpeg are unavailable.
     """
     ffmpeg_bin = get_ffmpeg_path()
     try:
-        args = [
+        # High quality audio conditioning filter chain
+        conditioned_args = [
+            "-hide_banner",
+            "-loglevel", "error",
+            "-y",
+            "-i", input_path,
+            "-vn",
+            "-acodec", "pcm_s16le",
+            "-ar", str(sample_rate),
+            "-ac", "1",
+            "-af", "aresample=async=1:first_pts=0,highpass=f=120,lowpass=f=4000,dynaudnorm=f=75:g=15:m=10.0",
+            output_path
+        ]
+        res = run_ffmpeg(conditioned_args)
+        if res.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            return True
+
+        # Fallback to basic extraction without filters if complex filter graph fails
+        basic_args = [
             "-hide_banner",
             "-loglevel", "error",
             "-y",
@@ -77,7 +97,7 @@ def extract_audio_to_wav(input_path: str, output_path: str, sample_rate: int = 1
             "-ac", "1",
             output_path
         ]
-        res = run_ffmpeg(args)
+        res = run_ffmpeg(basic_args)
         if res.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
             return True
     except Exception:
@@ -121,16 +141,19 @@ def extract_audio_to_wav(input_path: str, output_path: str, sample_rate: int = 1
     raise RuntimeError(f"Failed to extract audio using FFmpeg and fallback libraries from {input_path}")
 
 
-def detect_silence_intervals(wav_path: str, silence_thresh_db: float = -36.0, min_silence_duration: float = 0.25) -> List[Tuple[float, float]]:
+def detect_silence_intervals(wav_path: str, silence_thresh_db: float = -38.0, min_silence_duration: float = 0.55) -> List[Tuple[float, float]]:
     """
     Detects silence intervals in audio using ffmpeg silencedetect filter.
+    Applies highpass (180Hz) and lowpass (3500Hz) filtering prior to silence detection
+    to eliminate sub-bass rumbles and high-frequency electrical hiss from skewing voice activity.
     Returns a list of (silence_start, silence_end) in seconds.
     """
     silences = []
     try:
+        # Vocal-bandpass filtered silencedetect
         args = [
             "-i", wav_path,
-            "-af", f"silencedetect=noise={silence_thresh_db}dB:d={min_silence_duration}",
+            "-af", f"highpass=f=180,lowpass=f=3500,silencedetect=noise={silence_thresh_db}dB:d={min_silence_duration}",
             "-f", "null",
             "-"
         ]
@@ -145,6 +168,21 @@ def detect_silence_intervals(wav_path: str, silence_thresh_db: float = -36.0, mi
 
         for i in range(min(len(starts), len(ends))):
             silences.append((starts[i], ends[i]))
+
+        if not silences and res.returncode != 0:
+            # Fallback to plain silencedetect if bandpass filter was unsupported
+            plain_args = [
+                "-i", wav_path,
+                "-af", f"silencedetect=noise={silence_thresh_db}dB:d={min_silence_duration}",
+                "-f", "null",
+                "-"
+            ]
+            plain_res = run_ffmpeg(plain_args)
+            plain_output = plain_res.stderr
+            p_starts = [float(x) for x in re.findall(r"silence_start:\s*([0-9\.]+)", plain_output)]
+            p_ends = [float(x) for x in re.findall(r"silence_end:\s*([0-9\.]+)", plain_output)]
+            for i in range(min(len(p_starts), len(p_ends))):
+                silences.append((p_starts[i], p_ends[i]))
     except Exception:
         pass
     return silences
@@ -152,16 +190,16 @@ def detect_silence_intervals(wav_path: str, silence_thresh_db: float = -36.0, mi
 
 def segment_audio_smart(
     wav_path: str,
-    max_segment_duration: float = 4.5,
+    max_segment_duration: float = 14.0,
     min_segment_duration: float = 0.25,
-    silence_thresh_db: float = -36.0,
-    boundary_padding_s: float = 0.08
+    silence_thresh_db: float = -38.0,
+    boundary_padding_s: float = 0.25
 ) -> List[Tuple[float, float]]:
     """
     Segments long audio into speech segments with start and end timestamps.
-    Uses silence detection to split at natural speech pauses for optimal subtitle cadence.
-    Adds boundary padding to avoid clipping consonant onsets and tail word decays.
-    If speech segments exceed max_segment_duration, splits them with small overlap to protect words.
+    Uses silence detection to split at natural speech pauses for optimal ASR recognition context.
+    Adds boundary padding (+250ms) to avoid clipping consonant onsets and tail word decays.
+    If continuous speech exceeds max_segment_duration, evenly subdivides the interval.
     """
     duration = get_audio_duration_seconds(wav_path)
     if duration <= 0:
@@ -171,7 +209,7 @@ def segment_audio_smart(
     if duration <= max_segment_duration:
         return [(0.0, duration)]
 
-    silences = detect_silence_intervals(wav_path, silence_thresh_db=silence_thresh_db, min_silence_duration=0.25)
+    silences = detect_silence_intervals(wav_path, silence_thresh_db=silence_thresh_db, min_silence_duration=0.55)
 
     segments = []
     current_pos = 0.0

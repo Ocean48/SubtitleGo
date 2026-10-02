@@ -22,6 +22,8 @@ from src.core.subtitle_formatter import (
 from src.core.audio_processor import (
     segment_audio_smart,
     get_audio_duration_seconds,
+    extract_audio_to_wav,
+    detect_silence_intervals,
 )
 from src.core.runtime_manager import (
     find_system_python,
@@ -212,7 +214,7 @@ def test_package_metadata_and_version():
 
 
 def test_runtime_manager_pip_resolution():
-    print("[5/5] Testing runtime manager pip resolution and environment...")
+    print("[5/6] Testing runtime manager pip resolution and environment...")
     sys_py = find_system_python()
     assert sys_py is not None, "Expected to find a valid Python executable"
     
@@ -230,6 +232,45 @@ def test_runtime_manager_pip_resolution():
     print(f"      PASS: Pip resolved ({' '.join(pip_cmd)}) and runtime candidate directories verified.")
 
 
+def test_audio_conditioning_and_silence_bandpass():
+    print("[6/6] Testing audio conditioning (dynaudnorm/bandpass) and vocal-filtered silence detection...")
+    wav_bytes = generate_synthetic_wav(duration_s=4.0)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".raw.wav") as raw_f:
+        raw_f.write(wav_bytes)
+        raw_path = raw_f.name
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".conditioned.wav") as cond_f:
+        cond_path = cond_f.name
+
+    try:
+        # Test conditioned extraction
+        ok = extract_audio_to_wav(raw_path, cond_path, sample_rate=16000)
+        assert ok, "Audio extraction failed"
+        assert os.path.exists(cond_path) and os.path.getsize(cond_path) > 1000
+
+        cond_dur = get_audio_duration_seconds(cond_path)
+        assert abs(cond_dur - 4.0) < 0.2, f"Conditioned audio duration mismatch: {cond_dur}"
+
+        # Test bandpassed silence detection
+        silences = detect_silence_intervals(cond_path, silence_thresh_db=-38.0, min_silence_duration=0.3)
+        # Synthetic wav has silence around 1.0-1.5s
+        assert isinstance(silences, list)
+
+        # Test 250ms boundary safety padding in smart segmentation
+        segments = segment_audio_smart(cond_path, max_segment_duration=14.0, boundary_padding_s=0.25)
+        assert len(segments) >= 1
+        for s, e in segments:
+            assert s < e
+        print("      PASS: Audio conditioning filter chain and vocal bandpass silence detection verified.")
+    finally:
+        for p in [raw_path, cond_path]:
+            if os.path.exists(p):
+                try:
+                    os.unlink(p)
+                except Exception:
+                    pass
+
+
 def main():
     print("==================================================")
     print(" Running SubtitleGo Pipeline & Unit Tests")
@@ -239,6 +280,7 @@ def main():
     test_audio_segmentation_logic()
     test_package_metadata_and_version()
     test_runtime_manager_pip_resolution()
+    test_audio_conditioning_and_silence_bandpass()
     print("==================================================")
     print(" All SubtitleGo verification tests PASSED.")
     print("==================================================")

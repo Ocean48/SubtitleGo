@@ -232,7 +232,9 @@ class QueueManager(QObject):
             language=self._current_settings.get("language"),
             prompt=self._current_settings.get("prompt"),
             max_segment_length=float(self._current_settings.get("max_segment_length", 4.5)),
-            silence_thresh_db=float(self._current_settings.get("silence_thresh_db", -36.0)),
+            silence_thresh_db=float(self._current_settings.get("silence_thresh_db", -38.0)),
+            max_speech_chunk_duration=float(self._current_settings.get("max_speech_chunk_duration", 14.0)),
+            boundary_padding_s=float(self._current_settings.get("boundary_padding_s", 0.25)),
             batch_size=self._current_settings.get("batch_size"),
         )
 
@@ -292,7 +294,7 @@ class QueueManager(QObject):
                 self.sig_batch_finished.emit()
 
     def _auto_save_subtitles(self, media_path: str, result: Dict[str, Any]):
-        """Writes .srt and .vtt directly adjacent to media file."""
+        """Writes .srt, language-specific .srt (for VLC/media players), and .vtt directly adjacent to media file."""
         try:
             base_dir = os.path.dirname(media_path)
             base_name = os.path.splitext(os.path.basename(media_path))[0]
@@ -303,6 +305,20 @@ class QueueManager(QObject):
             if result.get("srt"):
                 with open(srt_path, "w", encoding="utf-8") as f:
                     f.write(result["srt"])
+
+                # Language-tagged SRT track for VLC auto-discovery (e.g. movie.en.srt, movie.zh.srt)
+                lang = (result.get("language") or "").strip().lower()
+                lang_map = {
+                    "english": "en", "chinese": "zh", "cantonese": "yue", "japanese": "ja",
+                    "korean": "ko", "spanish": "es", "french": "fr", "german": "de",
+                    "russian": "ru", "arabic": "ar", "portuguese": "pt", "italian": "it"
+                }
+                code = lang_map.get(lang, lang[:2] if len(lang) >= 2 and lang != "unknown" else None)
+                if code:
+                    lang_srt_path = os.path.join(base_dir, f"{base_name}.{code}.srt")
+                    with open(lang_srt_path, "w", encoding="utf-8") as f:
+                        f.write(result["srt"])
+
             if result.get("vtt"):
                 with open(vtt_path, "w", encoding="utf-8") as f:
                     f.write(result["vtt"])
