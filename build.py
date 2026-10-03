@@ -133,6 +133,14 @@ def build_and_package(
     os.makedirs(target_models, exist_ok=True)
     os.makedirs(os.path.join(dist_app_dir, "logs"), exist_ok=True)
 
+    # Copy LICENSE and NOTICES.md to dist app directory
+    for doc in ["LICENSE", "NOTICES.md", "README.md"]:
+        doc_src = os.path.join(root_dir, doc)
+        if os.path.isfile(doc_src):
+            shutil.copy2(doc_src, os.path.join(dist_app_dir, doc))
+            if os.path.exists(target_app_bundle):
+                shutil.copy2(doc_src, os.path.join(target_app_bundle, "Contents", "Resources", doc) if os.path.isdir(os.path.join(target_app_bundle, "Contents", "Resources")) else target_app_bundle)
+
     if include_models:
         local_models = os.path.join(root_dir, "models", "Qwen3-ASR-1.7B")
         target_qwen_models = os.path.join(target_models, "Qwen3-ASR-1.7B")

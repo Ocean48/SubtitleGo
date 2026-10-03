@@ -117,9 +117,21 @@ class TranscriptionWorker(QThread):
             total_samples = len(audio_data)
 
             prepared_chunks: List[Dict[str, Any]] = []
-            for idx, (s_sec, e_sec) in enumerate(time_intervals, start=1):
-                s_sample = max(0, int(s_sec * sr))
-                e_sample = min(total_samples, int(e_sec * sr))
+            for idx, interval in enumerate(time_intervals, start=1):
+                if hasattr(interval, "pad_start"):
+                    pad_s = interval.pad_start
+                    pad_e = interval.pad_end
+                    true_s = interval.start
+                    true_e = interval.end
+                    pauses = interval.pauses
+                else:
+                    s_sec, e_sec = interval[0], interval[1]
+                    pad_s, pad_e = s_sec, e_sec
+                    true_s, true_e = s_sec, e_sec
+                    pauses = []
+
+                s_sample = max(0, int(pad_s * sr))
+                e_sample = min(total_samples, int(pad_e * sr))
                 if e_sample - s_sample < 100:
                     continue
 
@@ -132,10 +144,13 @@ class TranscriptionWorker(QThread):
                 prepared_chunks.append({
                     "id": idx,
                     "cpath": cpath,
-                    "start": s_sec,
-                    "end": e_sec,
-                    "start_time": format_timestamp_srt(s_sec),
-                    "end_time": format_timestamp_srt(e_sec)
+                    "start": true_s,
+                    "end": true_e,
+                    "pad_start": pad_s,
+                    "pad_end": pad_e,
+                    "pauses": pauses,
+                    "start_time": format_timestamp_srt(true_s),
+                    "end_time": format_timestamp_srt(true_e)
                 })
 
             if not prepared_chunks:
@@ -169,11 +184,15 @@ class TranscriptionWorker(QThread):
 
                 results = model_mgr.transcribe_batch(b_paths, b_ctx, b_langs)
 
-                for chunk_meta, (text, lang) in zip(batch, results):
-                    cue_text = text.strip()
+                for chunk_meta, res in zip(batch, results):
+                    cue_text = res.text.strip() if hasattr(res, "text") else str(res[0]).strip()
+                    lang = res.language if hasattr(res, "language") else res[1]
+                    ts_items = getattr(res, "time_stamps", []) if hasattr(res, "time_stamps") else []
+
                     if cue_text:
                         chunk_meta["text"] = cue_text
                         chunk_meta["language"] = lang
+                        chunk_meta["time_stamps"] = ts_items
                         raw_segments.append(chunk_meta)
                         if lang:
                             detected_languages.append(lang)

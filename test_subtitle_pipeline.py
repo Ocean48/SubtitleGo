@@ -18,12 +18,17 @@ from src.core.subtitle_formatter import (
     build_srt_content,
     build_vtt_content,
     refine_subtitles_for_pacing,
+    _group_aligned_items_into_cues,
 )
 from src.core.audio_processor import (
     segment_audio_smart,
     get_audio_duration_seconds,
     extract_audio_to_wav,
     detect_silence_intervals,
+    compute_rms_envelope,
+    find_intra_chunk_pauses,
+    subdivide_speech_by_energy_valleys,
+    SpeechInterval,
 )
 from src.core.runtime_manager import (
     find_system_python,
@@ -271,6 +276,114 @@ def test_audio_conditioning_and_silence_bandpass():
                     pass
 
 
+def test_acoustic_energy_envelope_and_valley_subdivider():
+    print("[7/9] Testing RMS acoustic energy envelope & valley search subdivision...")
+    import numpy as np
+    sr = 16000
+    # Create 10-second audio: 0-4s speech (tone), 4-4.5s breath/pause (silence), 4.5-9s speech (tone)
+    audio = np.zeros(sr * 10, dtype=np.float32)
+    t = np.arange(sr * 10) / sr
+    audio[:sr * 4] = 0.4 * np.sin(2 * np.pi * 440 * t[:sr * 4])
+    audio[int(sr * 4.5):sr * 9] = 0.4 * np.sin(2 * np.pi * 880 * t[int(sr * 4.5):sr * 9])
+
+    rms, times = compute_rms_envelope(audio, sr=sr)
+    assert len(rms) > 100, "Expected RMS envelope frames"
+    # Find intra-chunk pauses
+    pauses = find_intra_chunk_pauses(audio, sr=sr, offset_s=0.0, min_pause_s=0.2)
+    assert len(pauses) >= 1, f"Expected pause around 4.0-4.5s, got: {pauses}"
+    p_s, p_e = pauses[0]
+    assert 3.8 <= p_s <= 4.2 and 4.3 <= p_e <= 4.7, f"Pause timing unexpected: {pauses[0]}"
+
+    # Test energy-valley subdivision across the 10s audio
+    sub_spans = subdivide_speech_by_energy_valleys(audio, sr=sr, start_s=0.0, end_s=9.0, max_duration=6.0, target_duration=5.0)
+    assert len(sub_spans) == 2, f"Expected 2 complete sentence sub-spans, got {len(sub_spans)}: {sub_spans}"
+    # The cut should occur near the 4.0-4.5s pause valley, not at arbitrary mathematical 4.5s
+    first_end = sub_spans[0][1]
+    assert 3.9 <= first_end <= 4.6, f"Expected cut at acoustic pause valley (~4.2s), got: {first_end}"
+    print(f"      PASS: Energy envelope & pause valley subdivision verified (Cut at {first_end}s).")
+
+
+def test_conversational_turnover_and_speech_interval_metadata():
+    print("[8/9] Testing conversational turnover pause detection & SpeechInterval metadata...")
+    # Synthetic dialog: Speaker A (0.0-1.5s), 350ms turnover pause (1.5-1.85s), Speaker B (1.85-3.5s)
+    sr = 16000
+    samples = bytearray()
+    for i in range(int(sr * 3.8)):
+        t = i / sr
+        if (0.0 <= t < 1.5) or (1.85 <= t < 3.5):
+            freq = 300 if t < 1.5 else 600
+            val = int(32767 * 0.4 * math.sin(2 * math.pi * freq * t))
+        else:
+            val = 0
+        samples.extend(struct.pack("<h", val))
+
+    wav_buf = io.BytesIO()
+    wav_buf.write(b"RIFF")
+    wav_buf.write(struct.pack("<I", 36 + len(samples)))
+    wav_buf.write(b"WAVEfmt ")
+    wav_buf.write(struct.pack("<IHHIIHH", 16, 1, 1, sr, sr * 2, 2, 16))
+    wav_buf.write(b"data")
+    wav_buf.write(struct.pack("<I", len(samples)))
+    wav_buf.write(samples)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".turnover.wav") as tmp_f:
+        tmp_f.write(wav_buf.getvalue())
+        tmp_path = tmp_f.name
+
+    try:
+        intervals = segment_audio_smart(tmp_path, min_segment_duration=0.25)
+        # Should detect two distinct speaker turns separated by 350ms turnover pause
+        assert len(intervals) >= 2, f"Expected 2 speaker turns, got {len(intervals)}"
+        # Verify SpeechInterval attributes
+        first = intervals[0]
+        assert isinstance(first, SpeechInterval)
+        assert first.start < first.end
+        assert first.pad_start <= first.start
+        assert first.pad_end >= first.end
+        # Test tuple unpacking compatibility
+        s, e = first
+        assert s == first.start and e == first.end
+        print(f"      PASS: Conversational turnover (350ms gap) identified {len(intervals)} distinct speaker intervals.")
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+def test_forced_alignment_cue_grouping_and_pause_snapping():
+    print("[9/9] Testing forced alignment token grouping & acoustic pause snapping...")
+    # 1. Test token-level forced alignment cue grouping
+    mock_tokens = [
+        {"text": "Hello", "start": 0.50, "end": 0.85},
+        {"text": "world,", "start": 0.90, "end": 1.25},
+        {"text": "this", "start": 1.30, "end": 1.55},
+        {"text": "is", "start": 1.60, "end": 1.75},
+        {"text": "a", "start": 1.80, "end": 1.90},
+        {"text": "precise", "start": 1.95, "end": 2.35},
+        {"text": "subtitle", "start": 2.40, "end": 2.90},
+        {"text": "stream.", "start": 2.95, "end": 3.40},
+    ]
+    cues = _group_aligned_items_into_cues(mock_tokens, max_chars=25, max_duration=3.0, lead_in=0.06)
+    assert len(cues) >= 2, f"Expected tokens to group into paced cues, got {len(cues)}"
+    assert cues[0]["start"] == 0.44  # 0.50 - 0.06s lead-in
+    assert "Hello world" in cues[0]["text"]
+
+    # 2. Test pause snapping in refine_subtitles_for_pacing
+    seg_with_pause = [{
+        "id": 1,
+        "start": 0.0,
+        "end": 8.0,
+        "text": "First clause of the sentence, followed by the second clause of the sentence.",
+        "language": "English",
+        "pauses": [(3.8, 4.3)]  # Breath pause between clauses
+    }]
+    snapped = refine_subtitles_for_pacing(seg_with_pause, max_chars_latin=50, max_duration=4.5)
+    assert len(snapped) == 2, f"Expected 2 clauses, got {len(snapped)}"
+    # The first cue should snap near the pause (3.8-4.3s)
+    first_cue_end = snapped[0]["end"]
+    assert 3.7 <= first_cue_end <= 4.4, f"Expected cue to snap to acoustic pause valley (~4.05s), got: {first_cue_end}"
+    print(f"      PASS: Forced alignment token grouping ({len(cues)} cues) and pause snapping ({first_cue_end}s) verified.")
+
+
 def main():
     print("==================================================")
     print(" Running SubtitleGo Pipeline & Unit Tests")
@@ -281,6 +394,9 @@ def main():
     test_package_metadata_and_version()
     test_runtime_manager_pip_resolution()
     test_audio_conditioning_and_silence_bandpass()
+    test_acoustic_energy_envelope_and_valley_subdivider()
+    test_conversational_turnover_and_speech_interval_metadata()
+    test_forced_alignment_cue_grouping_and_pause_snapping()
     print("==================================================")
     print(" All SubtitleGo verification tests PASSED.")
     print("==================================================")

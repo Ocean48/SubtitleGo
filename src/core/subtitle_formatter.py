@@ -221,18 +221,103 @@ def _split_text_into_chunks(text: str, max_chars: int) -> List[str]:
     return [c for c in final_chunks if c]
 
 
+def _group_aligned_items_into_cues(
+    items: List[Dict[str, Any]],
+    max_chars: int,
+    max_duration: float = 4.5,
+    min_duration: float = 0.3,
+    lead_in: float = 0.06,
+    lang: str = "Unknown"
+) -> List[Dict[str, Any]]:
+    """
+    Groups word/token forced alignment items into pacing-compliant subtitle cues.
+    """
+    if not items:
+        return []
+
+    is_cjk = any(_is_cjk(it.get("text", "")) for it in items) or any(c in lang.lower() for c in ["chinese", "cantonese", "japanese", "korean", "wu", "minnan"])
+    cues = []
+    current_tokens: List[Dict[str, Any]] = []
+
+    def flush_cue():
+        nonlocal current_tokens
+        if not current_tokens:
+            return
+        if is_cjk:
+            cue_text = "".join(it["text"] for it in current_tokens).strip()
+        else:
+            cue_text = " ".join(it["text"] for it in current_tokens).strip()
+
+        if not cue_text:
+            current_tokens = []
+            return
+
+        c_start = max(0.0, float(current_tokens[0].get("start", 0.0)) - lead_in)
+        c_end = max(float(current_tokens[-1].get("end", c_start + min_duration)), c_start + min_duration)
+
+        cues.append({
+            "start": round(c_start, 3),
+            "end": round(c_end, 3),
+            "start_time": format_timestamp_srt(c_start),
+            "end_time": format_timestamp_srt(c_end),
+            "text": cue_text,
+            "language": lang
+        })
+        current_tokens = []
+
+    for idx, item in enumerate(items):
+        token_txt = str(item.get("text", "")).strip()
+        if not token_txt:
+            continue
+
+        if not current_tokens:
+            current_tokens.append(item)
+            continue
+
+        # Check candidate length
+        if is_cjk:
+            cand_len = sum(len(it.get("text", "")) for it in current_tokens) + len(token_txt)
+        else:
+            cand_len = sum(len(it.get("text", "")) for it in current_tokens) + len(current_tokens) + len(token_txt)
+
+        first_start = float(current_tokens[0].get("start", 0.0))
+        item_end = float(item.get("end", first_start))
+        cand_dur = item_end - first_start
+
+        prev_end = float(current_tokens[-1].get("end", 0.0))
+        curr_start = float(item.get("start", prev_end))
+        gap_s = curr_start - prev_end
+
+        # Split conditions: character overflow, duration overflow, major punctuation, or conversational pause
+        prev_txt = str(current_tokens[-1].get("text", ""))
+        is_sentence_end = bool(re.search(r"[。！？!?；;\n]$", prev_txt))
+        has_turnover_gap = gap_s >= 0.35  # Conversational turnover pause
+
+        if cand_len > max_chars or cand_dur > max_duration or (is_sentence_end and cand_dur >= 1.0) or has_turnover_gap:
+            flush_cue()
+            current_tokens.append(item)
+        else:
+            current_tokens.append(item)
+
+    flush_cue()
+    return cues
+
+
 def refine_subtitles_for_pacing(
     segments: List[Dict[str, Any]],
     max_chars_latin: int = 42,
     max_chars_cjk: int = 18,
     max_duration: float = 4.5,
-    min_duration: float = 0.3
+    min_duration: float = 0.3,
+    lead_in: float = 0.06
 ) -> List[Dict[str, Any]]:
     """
     Post-processes subtitle segments to adhere to optimal pacing standards:
     - Target 2.0 to 4.5s per cue
     - Max 42 characters per line for Latin scripts, 18 characters for CJK
-    - Proportionally interpolates timestamps across split cues
+    - Uses exact token/word timestamps when forced aligner data is present
+    - Uses acoustic RMS pause valleys to anchor clause splits when available
+    - Proportionally interpolates timestamps across split cues with visual lead-in
     - Re-numbers cues sequentially
     """
     refined: List[Dict[str, Any]] = []
@@ -243,14 +328,37 @@ def refine_subtitles_for_pacing(
         if not text:
             continue
 
-        start_time = float(seg.get("start", 0.0))
-        end_time = float(seg.get("end", start_time + 1.0))
-        duration = max(0.2, end_time - start_time)
+        raw_start = float(seg.get("start", 0.0))
+        raw_end = float(seg.get("end", raw_start + 1.0))
+        # Apply standard broadcast visual cognitive lead-in (60ms)
+        start_time = max(0.0, raw_start - lead_in)
+        end_time = max(raw_end, start_time + min_duration)
+        duration = max(min_duration, end_time - start_time)
         lang = seg.get("language", "Unknown")
+        time_stamps = seg.get("time_stamps", [])
+        pauses = seg.get("pauses", [])
 
         is_cjk_lang = _is_cjk(text) or (isinstance(lang, str) and any(c in lang.lower() for c in ["chinese", "cantonese", "japanese", "korean", "wu", "minnan"]))
         max_chars = max_chars_cjk if is_cjk_lang else max_chars_latin
 
+        # 1. Neural Forced Alignment Branch (Highest precision)
+        if time_stamps:
+            aligned_cues = _group_aligned_items_into_cues(
+                items=time_stamps,
+                max_chars=max_chars,
+                max_duration=max_duration,
+                min_duration=min_duration,
+                lead_in=lead_in,
+                lang=lang
+            )
+            if aligned_cues:
+                for c in aligned_cues:
+                    c["id"] = cue_id
+                    refined.append(c)
+                    cue_id += 1
+                continue
+
+        # 2. Acoustic Energy & Pacing Split Branch
         needs_split = (len(text) > max_chars) or (duration > max_duration)
         if not needs_split:
             refined.append({
@@ -281,16 +389,33 @@ def refine_subtitles_for_pacing(
 
         total_chars = sum(max(1, len(c)) for c in chunks)
         cursor_time = start_time
+        cum_chars = 0
 
         for i, chunk in enumerate(chunks):
-            weight = max(1, len(chunk)) / total_chars
-            chunk_duration = duration * weight
-            c_start = cursor_time
-            c_end = start_time + duration if i == len(chunks) - 1 else cursor_time + chunk_duration
-
-            c_end = max(c_end, c_start + min_duration)
-            if c_end > end_time and i != len(chunks) - 1:
+            cum_chars += max(1, len(chunk))
+            if i == len(chunks) - 1:
+                c_start = cursor_time
                 c_end = end_time
+            else:
+                nominal_end = start_time + duration * (cum_chars / total_chars)
+                # Energy Pause Snapping: find nearest acoustic pause trough
+                best_pause_cut = None
+                if pauses:
+                    for p_s, p_e in pauses:
+                        p_mid = (p_s + p_e) / 2.0
+                        if abs(p_mid - nominal_end) <= 1.2:
+                            if best_pause_cut is None or abs(p_mid - nominal_end) < abs(best_pause_cut - nominal_end):
+                                best_pause_cut = p_mid
+
+                if best_pause_cut is not None:
+                    c_end = max(cursor_time + min_duration, min(best_pause_cut, end_time - min_duration))
+                else:
+                    c_end = nominal_end
+
+                c_start = cursor_time
+                c_end = max(c_end, c_start + min_duration)
+                if c_end > end_time:
+                    c_end = end_time
 
             refined.append({
                 "id": cue_id,

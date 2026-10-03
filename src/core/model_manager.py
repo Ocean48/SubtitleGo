@@ -3,6 +3,7 @@ import sys
 import gc
 import logging
 import threading
+from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Dict, Any, Callable
 
 logger = logging.getLogger("SubtitleGo.ModelManager")
@@ -91,11 +92,31 @@ def get_base_dir() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
-def _is_valid_model_dir(dir_path: str) -> bool:
+@dataclass
+class TranscriptionResult:
     """
-    Validates whether a directory contains fully downloaded and intact Qwen3-ASR model weights.
-    Requires config.json AND actual .safetensors / .bin weights with minimum size threshold (>1.0 GB).
-    Prevents premature startup when only metadata/config has downloaded.
+    Result of transcribing a single speech chunk.
+    Provides text, language, and optional token/word-level timestamp items.
+    Unpacks as (text, language) for backwards compatibility.
+    """
+    text: str
+    language: str = "Unknown"
+    time_stamps: List[Dict[str, Any]] = field(default_factory=list)
+
+    def __iter__(self):
+        return iter((self.text, self.language))
+
+    def __getitem__(self, index: int) -> str:
+        return (self.text, self.language)[index]
+
+    def __len__(self) -> int:
+        return 2
+
+
+def _is_valid_model_dir(dir_path: str, min_size_bytes: int = 1024 * 1024 * 1024) -> bool:
+    """
+    Validates whether a directory contains fully downloaded and intact model weights.
+    Requires config.json AND actual .safetensors / .bin weights with minimum size threshold.
     """
     if not dir_path or not os.path.isdir(dir_path):
         return False
@@ -117,6 +138,15 @@ def _is_valid_model_dir(dir_path: str) -> bool:
 
     if not weight_files:
         return False
+
+    try:
+        total_size = sum(os.path.getsize(fp) for fp in weight_files)
+        if total_size < min_size_bytes:
+            return False
+    except Exception:
+        return False
+
+    return True
 
     # Check total size of weight files (Qwen3-ASR-1.7B is ~3.4 GB, minimum threshold is 1.0 GB)
     try:
@@ -221,6 +251,115 @@ def find_model_path() -> Optional[str]:
             return os.path.abspath(c)
 
     return None
+
+
+def get_candidate_forced_aligner_dirs() -> List[str]:
+    """
+    Returns candidate model weight search directories for Qwen3-ForcedAligner.
+    """
+    candidates = []
+    base_dir = get_base_dir()
+
+    # 1. Local application folder
+    candidates.append(os.path.abspath(os.path.join(base_dir, "models", "Qwen3-ForcedAligner-0.6B")))
+    candidates.append(os.path.abspath(os.path.join(base_dir, "models", "forced_aligner")))
+
+    # 2. Platform user data directory
+    if sys.platform == "darwin":
+        candidates.append(os.path.abspath(os.path.expanduser("~/Library/Application Support/SubtitleGo/models/Qwen3-ForcedAligner-0.6B")))
+        candidates.append(os.path.abspath(os.path.expanduser("~/Library/Application Support/SubtitleStudio/models/Qwen3-ForcedAligner-0.6B")))
+    elif sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA", "")
+        if local_app_data:
+            candidates.append(os.path.abspath(os.path.join(local_app_data, "SubtitleGo", "models", "Qwen3-ForcedAligner-0.6B")))
+            candidates.append(os.path.abspath(os.path.join(local_app_data, "SubtitleStudio", "models", "Qwen3-ForcedAligner-0.6B")))
+        home_appdata = os.path.join(os.path.expanduser("~"), "AppData", "Local", "SubtitleGo", "models", "Qwen3-ForcedAligner-0.6B")
+        if home_appdata not in candidates:
+            candidates.append(os.path.abspath(home_appdata))
+    else:
+        candidates.append(os.path.abspath(os.path.expanduser("~/.local/share/subtitlego/models/Qwen3-ForcedAligner-0.6B")))
+        candidates.append(os.path.abspath(os.path.expanduser("~/.local/share/subtitlestudio/models/Qwen3-ForcedAligner-0.6B")))
+
+    # 3. Hugging Face Hub cache directory
+    hf_hub_dir = os.path.expanduser("~/.cache/huggingface/hub/models--Qwen--Qwen3-ForcedAligner-0.6B")
+    if os.path.isdir(hf_hub_dir):
+        candidates.append(os.path.abspath(hf_hub_dir))
+        snapshots_dir = os.path.join(hf_hub_dir, "snapshots")
+        if os.path.isdir(snapshots_dir):
+            try:
+                for snap in os.listdir(snapshots_dir):
+                    snap_path = os.path.join(snapshots_dir, snap)
+                    if os.path.isdir(snap_path):
+                        candidates.append(os.path.abspath(snap_path))
+            except Exception:
+                pass
+
+    return candidates
+
+
+def find_forced_aligner_path() -> Optional[str]:
+    """
+    Finds the path to verified local Qwen3-ForcedAligner model weights.
+    Returns directory path string if valid model files exist, else None.
+    """
+    for c in get_candidate_forced_aligner_dirs():
+        if _is_valid_model_dir(c, min_size_bytes=300 * 1024 * 1024):
+            return os.path.abspath(c)
+    return None
+
+
+def is_forced_aligner_downloaded() -> bool:
+    """Returns True if verified local forced aligner weights are present."""
+    p = find_forced_aligner_path()
+    return p is not None and os.path.isdir(p)
+
+
+def get_forced_aligner_dir() -> str:
+    """Returns target directory for Qwen3-ForcedAligner weights."""
+    existing = find_forced_aligner_path()
+    if existing:
+        return existing
+
+    base_dir = get_base_dir()
+    local_target = os.path.join(base_dir, "models", "Qwen3-ForcedAligner-0.6B")
+    return local_target
+
+
+def download_forced_aligner_weights(
+    target_dir: Optional[str] = None,
+    progress_callback: Optional[Callable[[str, float], None]] = None,
+    log_callback: Optional[Callable[[str], None]] = None
+) -> str:
+    """
+    Downloads Qwen3-ForcedAligner-0.6B model weights from Hugging Face Hub.
+    """
+    from huggingface_hub import snapshot_download
+
+    if target_dir is None:
+        target_dir = get_forced_aligner_dir()
+
+    os.makedirs(target_dir, exist_ok=True)
+    repo_id = "Qwen/Qwen3-ForcedAligner-0.6B"
+
+    def _log(msg: str):
+        if log_callback:
+            log_callback(msg)
+        print(f"[ModelManager] {msg}")
+
+    _log(f"Starting Qwen3-ForcedAligner model download from Hugging Face ({repo_id})...")
+    if progress_callback:
+        progress_callback("Connecting to Hugging Face Hub...", 5.0)
+
+    snapshot_download(
+        repo_id=repo_id,
+        local_dir=target_dir,
+        local_dir_use_symlinks=False
+    )
+    _log("Forced aligner weights downloaded and verified.")
+    if progress_callback:
+        progress_callback("Download completed successfully.", 100.0)
+
+    return target_dir
 
 
 def is_model_downloaded() -> bool:
@@ -637,20 +776,32 @@ class ModelManager:
             self.model_path = model_path
             logger.info(f"Loading weights from model path: {model_path}")
 
+            forced_aligner_path = find_forced_aligner_path()
+            if forced_aligner_path:
+                logger.info(f"Found local Qwen3-ForcedAligner weights at: {forced_aligner_path}")
+            else:
+                logger.info("No local forced aligner weights found; running in acoustic energy-guided alignment mode.")
+
             if progress_callback:
                 progress_callback(f"Loading Qwen3-ASR model ({self.device})...")
 
             rec = get_recommended_settings()
             self.max_batch_size = max_batch_size or rec["recommended_batch_size"]
 
+            load_kwargs: Dict[str, Any] = {
+                "dtype": self.dtype,
+                "device_map": self.device,
+                "max_inference_batch_size": max(self.max_batch_size, 4),
+                "max_new_tokens": 512,
+            }
+            if forced_aligner_path:
+                load_kwargs["forced_aligner"] = forced_aligner_path
+
             self.model = Qwen3ASRModel.from_pretrained(
                 model_path,
-                dtype=self.dtype,
-                device_map=self.device,
-                max_inference_batch_size=max(self.max_batch_size, 4),
-                max_new_tokens=512,
+                **load_kwargs
             )
-            logger.info(f"Qwen3-ASR model loaded successfully on {self.device}.")
+            logger.info(f"Qwen3-ASR model loaded successfully on {self.device} (Forced Aligner: {bool(forced_aligner_path)}).")
             return True
         except Exception as e:
             import traceback
@@ -711,11 +862,11 @@ class ModelManager:
         audio_paths: List[str],
         contexts: Optional[List[str]] = None,
         languages: Optional[List[Optional[str]]] = None
-    ) -> List[Tuple[str, str]]:
+    ) -> List[TranscriptionResult]:
         """
         Runs batch speech recognition inference.
         Includes automatic GPU OOM handling, sequential fallback, and CPU fallback for MPS.
-        Returns list of (transcription_text, detected_language).
+        Returns list of TranscriptionResult (which unpacks as (text, language)).
         """
         if self.model is None:
             self.load_model()
@@ -725,17 +876,37 @@ class ModelManager:
         if languages is None:
             languages = [None for _ in audio_paths]
 
+        has_forced_aligner = getattr(self.model, "forced_aligner", None) is not None
+
         with self._lock:
             import torch
             try:
                 with torch.inference_mode():
-                    results = self.model.transcribe(
+                    raw_results = self.model.transcribe(
                         audio=audio_paths,
                         context=contexts,
                         language=languages,
-                        return_time_stamps=False,
+                        return_time_stamps=has_forced_aligner,
                     )
-                return [(r.text.strip(), r.language or "Unknown") for r in results]
+
+                results: List[TranscriptionResult] = []
+                for r in raw_results:
+                    txt = r.text.strip()
+                    lang = r.language or "Unknown"
+                    ts_items: List[Dict[str, Any]] = []
+                    if has_forced_aligner and getattr(r, "time_stamps", None) is not None:
+                        try:
+                            for it in r.time_stamps:
+                                ts_items.append({
+                                    "text": str(getattr(it, "text", "")),
+                                    "start": float(getattr(it, "start_time", 0.0)),
+                                    "end": float(getattr(it, "end_time", 0.0))
+                                })
+                        except Exception as e:
+                            logger.debug(f"Failed to parse timestamp items from forced aligner: {e}")
+                    results.append(TranscriptionResult(text=txt, language=lang, time_stamps=ts_items))
+
+                return results
 
             except Exception as e:
                 if self._is_oom_error(e):
@@ -764,12 +935,25 @@ class ModelManager:
                         print("[ModelManager] Single chunk exceeded Apple Silicon MPS memory. Falling back to CPU mode...")
                         self.load_model_on_device("cpu")
                         with torch.inference_mode():
-                            results = self.model.transcribe(
+                            raw_results = self.model.transcribe(
                                 audio=audio_paths,
                                 context=contexts,
                                 language=languages,
-                                return_time_stamps=False,
+                                return_time_stamps=has_forced_aligner,
                             )
-                        return [(r.text.strip(), r.language or "Unknown") for r in results]
+                        results = []
+                        for r in raw_results:
+                            txt = r.text.strip()
+                            lang = r.language or "Unknown"
+                            ts_items = []
+                            if has_forced_aligner and getattr(r, "time_stamps", None) is not None:
+                                for it in r.time_stamps:
+                                    ts_items.append({
+                                        "text": str(getattr(it, "text", "")),
+                                        "start": float(getattr(it, "start_time", 0.0)),
+                                        "end": float(getattr(it, "end_time", 0.0))
+                                    })
+                            results.append(TranscriptionResult(text=txt, language=lang, time_stamps=ts_items))
+                        return results
 
                 raise e
