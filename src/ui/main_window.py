@@ -86,7 +86,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(f"{__title__} v{__version__}")
         self.resize(1300, 840)
-        self.setMinimumSize(880, 580)
+        self.setMinimumSize(980, 620)
 
         self._current_theme = "dark"
         self.queue_mgr = QueueManager(self)
@@ -138,11 +138,13 @@ class MainWindow(QMainWindow):
         # Left Panel (Tabbed Sidebar: Media Queue | Settings)
         left_card = QFrame()
         left_card.setProperty("class", "cardFrame")
+        left_card.setMinimumWidth(380)
         left_card_layout = QVBoxLayout(left_card)
         left_card_layout.setContentsMargins(8, 8, 8, 8)
         left_card_layout.setSpacing(6)
 
         self.sidebar_tabs = QTabWidget()
+        self.sidebar_tabs.setMinimumWidth(360)
 
         # Tab 1: Queue List
         self.queue_list = QueueList(self.queue_mgr, self)
@@ -151,8 +153,9 @@ class MainWindow(QMainWindow):
         # Tab 2: Settings Panel inside scroll area
         settings_scroll = QScrollArea()
         settings_scroll.setWidgetResizable(True)
-        settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.settings_panel = SettingsPanel(self)
+        self.settings_panel.setMinimumWidth(360)
         settings_scroll.setWidget(self.settings_panel)
         self.sidebar_tabs.addTab(settings_scroll, "Settings")
 
@@ -302,6 +305,8 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.inspector_stack, stretch=1)
 
         splitter.addWidget(right_card)
+        splitter.setCollapsible(0, False)
+        splitter.setCollapsible(1, False)
 
         # Splitter initial sizes: 32% left, 68% right
         splitter.setSizes([380, 840])

@@ -2,7 +2,7 @@ import os
 import tempfile
 from typing import Dict, Any
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QCheckBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QComboBox, QCheckBox,
     QDoubleSpinBox, QSpinBox, QLineEdit, QPushButton, QGroupBox, QMessageBox,
     QFrame
 )
@@ -29,6 +29,7 @@ class SettingsPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setMinimumWidth(360)
         self.rec_settings = get_recommended_settings()
         self._init_ui()
         self.sync_model_state()
@@ -194,37 +195,38 @@ class SettingsPanel(QWidget):
         # Hardware Info Note
         self.lbl_mem_info = QLabel(f"Hardware Profile: {self.rec_settings['memory_label']}")
         self.lbl_mem_info.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 500;")
+        self.lbl_mem_info.setWordWrap(True)
         adv_layout.addWidget(self.lbl_mem_info)
 
-        # Utility Buttons Row
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(8)
+        # Utility Buttons (2x2 Grid to ensure no label cutoff)
+        btn_grid = QGridLayout()
+        btn_grid.setSpacing(8)
 
         self.btn_toggle_model = QPushButton("Start Qwen Model")
         self.btn_toggle_model.setProperty("class", "btnPrimary")
         self.btn_toggle_model.setToolTip("Start or end the Qwen3-ASR model in memory")
         self.btn_toggle_model.clicked.connect(self.sig_toggle_model)
-        btn_row.addWidget(self.btn_toggle_model)
+        btn_grid.addWidget(self.btn_toggle_model, 0, 0)
         
         self.btn_download_model = QPushButton("AI Setup & Models...")
         self.btn_download_model.setProperty("class", "btnSecondary")
         self.btn_download_model.setToolTip("Download, verify, or reinstall AI engine and speech models")
         self.btn_download_model.clicked.connect(self._open_setup_dialog)
-        btn_row.addWidget(self.btn_download_model)
+        btn_grid.addWidget(self.btn_download_model, 0, 1)
 
         self.btn_diagnostics = QPushButton("Logs & Diag...")
         self.btn_diagnostics.setProperty("class", "btnSecondary")
         self.btn_diagnostics.setToolTip("View system diagnostics, CUDA status, and logs/subtitlego.log")
         self.btn_diagnostics.clicked.connect(self._open_diagnostics_dialog)
-        btn_row.addWidget(self.btn_diagnostics)
+        btn_grid.addWidget(self.btn_diagnostics, 1, 0)
 
         self.btn_purge_temp = QPushButton("Clear Temp Audio")
         self.btn_purge_temp.setProperty("class", "btnSecondary")
         self.btn_purge_temp.setToolTip("Delete temporary extracted WAV segments from disk")
         self.btn_purge_temp.clicked.connect(self._purge_temp_cache)
-        btn_row.addWidget(self.btn_purge_temp)
+        btn_grid.addWidget(self.btn_purge_temp, 1, 1)
 
-        adv_layout.addLayout(btn_row)
+        adv_layout.addLayout(btn_grid)
 
         adv_main_layout.addWidget(self.adv_content)
         self.grp_advanced.toggled.connect(self.adv_content.setVisible)

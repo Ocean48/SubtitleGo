@@ -289,6 +289,8 @@ QComboBox QAbstractItemView {{
     border: 1px solid {p["border_default"]};
     selection-background-color: {p["accent_primary"]};
     selection-color: #ffffff;
+    min-width: 280px;
+    padding: 4px;
 }}
 
 /* CheckBox */
