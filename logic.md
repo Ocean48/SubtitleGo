@@ -12,14 +12,15 @@ SubtitleGo processes media files entirely offline on local hardware (NVIDIA CUDA
 flowchart TD
     A["Input Media File (Video / Audio)"] --> B["Audio Extraction & Conditioning<br/>FFmpeg 16kHz Mono WAV + aresample + dynaudnorm + Bandpass"]
     B --> C["Probe Audio Duration<br/>wave / soundfile / torchaudio"]
-    C --> D["Speech Interval & Voice Activity Detection<br/>Vocal Bandpassed silencedetect (-38dB, 0.55s)"]
-    D --> E["Segment Refining & Subdividing<br/>Phoneme Padding +250ms, Cap at 14.0s"]
+    C --> D["Speech Interval & Voice Activity Detection<br/>Neural Silero VAD (Music & Noise Rejection) / FFmpeg Fallback"]
+    D --> E["Segment Refining & Subdividing<br/>Tapered Boundary Padding (150ms/20ms), Cap at 7.0s"]
     E --> F["Batch Assembly & Dynamic Sizing<br/>VRAM / RAM-aware Chunk Batching"]
     F --> G["Local Qwen3-ASR Model Inference<br/>CUDA (FP16/BF16) / MPS (FP16) / CPU (FP32)"]
-    G --> H["Decoupled Subtitle Pacing & Formatting<br/>Latin (42 chars) / CJK (18 chars) / Cap at 4.5s"]
-    H --> I["Proportional Duration Interpolation<br/>Character-weighted Timestamp Alignment"]
-    I --> J["Multi-Track Subtitle Export<br/>.srt, .<lang>.srt (VLC Auto-Track), .vtt, .txt"]
-    J --> K["Interactive PySide6 GUI<br/>Video Player Sync & Real-time Cue Editor"]
+    G --> H["Cross-Chunk Boundary Deduplication<br/>Prefix/Suffix Overlap Removal & Repetition Loop Filtering"]
+    H --> I["Decoupled Subtitle Pacing & Formatting<br/>Latin (42 chars) / CJK (18 chars) / Cap at 4.5s"]
+    I --> J["Timestamp Alignment & Calibration<br/>Neural Forced Alignment / Acoustic Valley Snapping"]
+    J --> K["Multi-Track Subtitle Export<br/>.srt, .<lang>.srt (VLC Auto-Track), .vtt, .txt"]
+    K --> L["Interactive PySide6 GUI<br/>Video Player Sync & Real-time Cue Editor"]
 ```
 
 ---
@@ -34,46 +35,38 @@ Audio is extracted and conditioned prior to analysis to ensure consistent signal
 ```bash
 ffmpeg -hide_banner -loglevel error -y -i "<input_path>" \
     -vn -acodec pcm_s16le -ar 16000 -ac 1 \
-    -af "aresample=async=1:first_pts=0,highpass=f=120,lowpass=f=4000,dynaudnorm=f=75:g=15:m=10.0" \
+    -af "aresample=async=1:first_pts=0,highpass=f=120,lowpass=f=4000,dynaudnorm=f=75:g=15:m=4.0" \
     "<output_path>"
 ```
 
 ### 2.2. Audio Conditioning Components
 - **PTS Synchronization (`aresample=async=1:first_pts=0`)**: Resamples and locks audio samples to video Presentation Time Stamps (PTS). This prevents gradual audio/video desynchronization on Variable Frame Rate (VFR) recordings commonly captured by smartphones, webcams, and screen recorders.
 - **Vocal Bandpass (`highpass=f=120,lowpass=f=4000`)**: Cuts deep mechanical rumble (<120 Hz) and high-frequency electronic hiss (>4000 Hz), preserving the core frequencies required for human speech recognition.
-- **Dynamic Audio Normalization (`dynaudnorm=f=75:g=15:m=10.0`)**: Continuously normalizes volume fluctuations without peak clipping or distortion. Quiet whispers and distant speakers are brought to clear listening levels while loud speech is controlled.
+- **Dynamic Audio Normalization (`dynaudnorm=f=75:g=15:m=4.0`)**: Continuously normalizes volume fluctuations without peak clipping. The maximum gain boost is calibrated to `m=4.0` (~12 dB) to ensure whispers are audible while preventing quiet background music and ambient soundtracks from being over-amplified into speech candidates.
 - **Format Standard**: 16-bit little-endian uncompressed PCM (`pcm_s16le`), 16 kHz sample rate, mono channel (`ac=1`).
 - **Resilience Fallback**: If the advanced filter graph is unsupported by an older FFmpeg binary, the pipeline automatically falls back to basic unconditioned extraction, and then to Python fallback backends (`soundfile`, `scipy.signal`, or `torchaudio`).
 
 ---
 
-## 3. Step 2: Vocal-Bandpassed Silence Detection & Smart Interval Segmentation
+## 3. Step 2: Neural Silero Voice Activity Detection (VAD) & Smart Interval Segmentation
 
-*Source: `src/core/audio_processor.py` -> `detect_silence_intervals()` & `segment_audio_smart()`*
+*Source: `src/core/audio_processor.py` -> `detect_speech_intervals_vad()` & `segment_audio_smart()`*
 
-Instead of blindly cutting audio into arbitrary time slices, SubtitleGo uses **Voice Activity Detection (VAD)** powered by FFmpeg's `silencedetect` audio filter combined with vocal bandpass pre-filtering.
+Instead of blindly cutting audio into arbitrary time slices or relying merely on decibel thresholds, SubtitleGo uses **Neural Voice Activity Detection (VAD)** powered by Silero VAD (`models/silero_vad.jit`).
 
-### 3.1. Filtered Silence & Conversational Turnover Detection
-```text
-highpass=f=180,lowpass=f=3500,silencedetect=noise=-38dB:d=0.30
-```
-- **Highpass (`180 Hz`)**: Eliminates low-frequency HVAC hums, traffic rumble, and instrumental sub-bass.
-- **Lowpass (`3500 Hz`)**: Eliminates high-frequency sizzles and room echo above human vocal ranges.
-- **`silencedetect=noise=-38dB:d=0.30`**: Identifies periods where vocal-range volume remains below `-38 dB` for at least `0.30 seconds` as a pause. This captures natural conversational turn-taking (where one speaker/character finishes talking and another begins) and sentence terminations without merging distinct speakers into run-on utterances.
+### 3.1. Background Music & Non-Speech Rejection
+- **True Vocal Discrimination**: Conventional decibel volume filters (such as FFmpeg's `silencedetect`) cannot distinguish between singing, instrumental tracks, piano chords, EDM beats, and spoken dialogue. Background music above `-38 dB` would be treated as speech, leading speech recognition models to hallucinate random phrases or repetitive lyrics.
+- **Neural Phoneme Probability**: Silero VAD evaluates deep acoustic features across 30ms windows at 16 kHz. Audio frames with vocal probabilities below threshold (`0.50`) are rejected as non-speech. If an audio passage contains only background music, ambient sound effects, or instrumental cues, zero speech intervals are produced, completely eliminating non-speech hallucinations.
+- **FFmpeg Resilience Fallback**: If PyTorch JIT or Silero VAD cannot be loaded, the pipeline automatically falls back to vocal-bandpassed FFmpeg silence detection (`highpass=f=180,lowpass=f=3500,silencedetect=noise=-38dB:d=0.30`).
 
-### 3.2. Speech Inversion, Boundary Decoupling & Padding
-- Silence boundaries (`silence_start`, `silence_end`) are inverted to extract active speech intervals `[current_pos, s_start]`.
-- **Phoneme Safety Boundary Padding (`boundary_padding_s = 0.20s`)**: Every detected segment is padded by **+200 ms at the start** and **+200 ms at the end** strictly for the ASR audio extraction window:
-  ```python
-  pad_start = max(0.0, current_pos - boundary_padding_s)
-  pad_end = min(total_duration, s_start + boundary_padding_s)
-  ```
-  This prevents clipping initial plosive consonants (e.g. *p*, *t*, *k*) and trailing word decays without leaking premature display lead-time into the visual subtitle timestamps.
+### 3.2. Boundary Tapering & Overlap Suppression
+- **Silence Boundary Padding (`boundary_padding_s = 0.15s`)**: When speech is bordered by true acoustic silence, a safety pad of +150 ms is added to preserve initial plosives (*p*, *t*, *k*) and trailing vocal decays without clipping.
+- **Tapered Internal Subdivision Padding (20 ms)**: When long utterances are subdivided into chunks, internal cut boundaries between adjacent sub-spans use minimal padding (20 ms) rather than 250 ms. This eliminates the 500 ms acoustic window overlap that historically caused words near cut boundaries to be transcribed twice.
 - **SpeechInterval Structured Metadata**: `SpeechInterval` tracks true acoustic speech bounds (`start`, `end`) separate from the extraction window (`pad_start`, `pad_end`), alongside intra-segment micro-pauses (`pauses`).
 - **Short Speech Retention (`min_segment_duration = 0.25s`)**: Short affirmations, interjections, and brief words ($\ge 0.25s$) are retained while brief electrical pops (< 0.25s) are rejected.
 
 ### 3.3. Acoustic Energy Valley Subdivision & Complete Sentence Preservation
-When uninterrupted speech exceeds target chunk durations ($6.0s - 8.0s$):
+When uninterrupted speech exceeds target chunk durations ($5.5s - 7.0s$):
 1. **No Mid-Word Cuts**: The pipeline scans a search window ($[t_{\text{target}} - 1.5s, t_{\text{target}} + 1.5s]$) across the short-time RMS energy envelope.
 2. **Breath & Pause Trough Snapping**: The segment is divided at the local acoustic energy minimum (the quietest breath or between-word pause), keeping grammatical sentences and spoken phrases intact.
 
@@ -125,19 +118,26 @@ Inference batch size is dynamically adjusted based on detected hardware profile:
 
 SubtitleGo decouples the ASR audio chunk size (`8.0s`) from the visual subtitle display pacing (`4.5s`). Once raw transcriptions are returned, `refine_subtitles_for_pacing()` formats them into optimal viewing cues.
 
-### 5.1. Script-Aware Character Limits
+### 5.1. Cross-Chunk Boundary Deduplication & Repetition Suppression
+- **Acoustic Overlap Deduplication**: Extraction padding between adjacent chunks can cause speech near chunk boundaries to be recognized in both chunks. SubtitleGo's `deduplicate_raw_segments()` and `deduplicate_chunk_boundary()` detect prefix/suffix matches across adjacent chunks:
+  - **Latin Scripts**: Word-level $n$-gram matching (comparing the trailing $k$ words of Chunk $N$ against the leading $k$ words of Chunk $N+1$). Overlapping prefix words are automatically stripped from Chunk $N+1$.
+  - **CJK Scripts**: Character-level suffix/prefix matching (ignoring punctuation). Duplicate characters at the start of Chunk $N+1$ are cleanly removed.
+- **Repetition Loop Suppression**: Speech recognition models can enter repetitive loops on low-confidence or silent audio (e.g. repeating a phrase 3+ times). `remove_repetition_loops()` collapses repeated clauses and CJK character loops to a single clean utterance.
+- **Consecutive Duplicate Suppression**: A final pass in `refine_subtitles_for_pacing()` detects identical cue texts appearing within 2.0s of each other and eliminates the duplicate cue.
+
+### 5.2. Script-Aware Character Limits
 - **Latin Scripts (English, Spanish, French, German, etc.)**: Maximum `42 characters` per cue.
 - **CJK Scripts (Chinese, Japanese, Korean)**: Maximum `18 characters` per cue.
   - CJK languages do not use whitespace to separate words, making word-count rules invalid. SubtitleGo uses character classification regex (`[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]`) to detect CJK content and apply appropriate reading constraints.
 
-### 5.2. Neural Forced Alignment & Word/Token Timestamp Grouping
-When forced alignment is active (`Qwen3ForcedAligner`), the model outputs millisecond-accurate timestamps for each word and CJK token. `_group_aligned_items_into_cues()` groups consecutive tokens into cues constrained by maximum line length, visual duration limits ($0.5s - 4.5s$), sentence ends, and conversational turnover pauses.
+### 5.3. Neural Forced Alignment & Word/Token Timestamp Grouping
+When forced alignment is active (`Qwen3ForcedAligner`), the model outputs millisecond-accurate timestamps for each word and CJK token. `_group_aligned_items_into_cues()` groups consecutive tokens into cues constrained by maximum line length, visual duration limits ($0.5s - 4.5s$), sentence ends, and conversational turnover pauses. Users can install the aligner via the Setup Wizard or Model Setup Dialog.
 
-### 5.3. Acoustic Pause Snapping & Visual Lead-In Calibration
+### 5.4. Acoustic Pause Snapping & Visual Lead-In Calibration
 When forced alignment is inactive, SubtitleGo uses high-precision acoustic snapping:
-- **Broadcast Standard Visual Lead-In (`lead_in = 60ms`)**: Advances cue onset by 60ms for optimal human reading perception without premature 250ms bleeding.
+- **Broadcast Standard Visual Lead-In (`lead_in = 60ms`)**: Advances cue onset by 60ms for optimal human reading perception without premature bleeding.
 - **Acoustic Pause Snapping**: When a sentence is split at punctuation marks (`,`, `.`, `!`, `?`, `。`, `，`), the boundary is snapped to the nearest intra-chunk RMS energy valley/breath pause rather than relying solely on linear character ratio.
-- **Proportional Fallback**: In the absence of an acoustic pause, duration is distributed proportionally by character weight and clamped between `min_duration = 0.3s` and `max_duration = 4.5s`.
+- **Proportional Fallback**: In the absence of an acoustic pause, duration is distributed proportionally by character weight across tightly bounded speech spans ($5.5s - 7.0s$) and clamped between `min_duration = 0.3s` and `max_duration = 4.5s`.
 
 ---
 
@@ -179,15 +179,17 @@ SubtitleGo provides a native PySide6 desktop interface for monitoring and editin
 
 | Parameter | Default Value | Location | Purpose |
 | :--- | :--- | :--- | :--- |
-| `silence_thresh_db` | `-38.0 dB` | `audio_processor.py` / `settings_panel.py` | Volume threshold below which audio is classified as vocal silence |
+| `VAD Model` | `Silero VAD (JIT)` | `models/silero_vad.jit` / `audio_processor.py` | Neural Voice Activity Detection rejecting music, instruments, and background noise |
+| `silence_thresh_db` | `-38.0 dB` | `audio_processor.py` / `settings_panel.py` | Fallback volume threshold below which audio is classified as silence |
 | `min_silence_duration` | `0.30 s` | `audio_processor.py` | Minimum silence duration for conversational turnover & sentence boundary detection |
-| `max_speech_chunk_duration` | `8.0 s` | `audio_processor.py` / `transcription_worker.py` | Target speech chunk duration (subdivided at acoustic energy valleys) |
+| `max_speech_chunk_duration` | `7.0 s` | `audio_processor.py` / `transcription_worker.py` | Target speech chunk duration (subdivided at acoustic energy valleys) |
 | `min_segment_duration` | `0.25 s` | `audio_processor.py` | Minimum duration required for an interval (retains short speech, drops pops) |
-| `boundary_padding_s` | `0.20 s` (200 ms) | `audio_processor.py` | Boundary safety padding added strictly for ASR acoustic extraction |
+| `boundary_padding_s` | `0.15 s` (150 ms) | `audio_processor.py` / `transcription_worker.py` | Acoustic boundary safety padding for silence-bounded speech |
+| `internal_padding_s` | `0.02 s` (20 ms) | `audio_processor.py` | Tapered boundary padding between contiguous subdivided chunks |
 | `lead_in` | `0.06 s` (60 ms) | `subtitle_formatter.py` | Broadcast standard visual cognitive lead-in for on-screen cues |
 | Audio Sample Rate | `16000 Hz` | `audio_processor.py` | Standard 16 kHz audio sampling rate for Qwen3-ASR |
 | Audio Channels | `1` (Mono) | `audio_processor.py` | Single-channel PCM audio for optimal model efficiency |
-| Audio Filters | `aresample + bandpass + dynaudnorm` | `audio_processor.py` | Audio conditioning chain for PTS sync, vocal isolation, and dynamic volume leveling |
+| Audio Filters | `aresample + bandpass + dynaudnorm(m=4.0)` | `audio_processor.py` | Audio conditioning chain for PTS sync, vocal isolation, and dynamic volume leveling |
 | `max_segment_length` (Cue) | `4.5 s` | `settings_panel.py` / `subtitle_formatter.py` | Maximum on-screen display duration for a single subtitle cue |
 | `min_cue_duration` | `0.3 s` | `subtitle_formatter.py` | Minimum duration for a single subtitle cue |
 | `max_chars_latin` | `42` characters | `subtitle_formatter.py` | Maximum characters per subtitle line for Latin scripts |

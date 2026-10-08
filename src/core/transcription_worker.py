@@ -14,6 +14,7 @@ from .audio_processor import (
 )
 from .subtitle_formatter import (
     refine_subtitles_for_pacing,
+    deduplicate_raw_segments,
     build_srt_content,
     build_vtt_content,
     build_txt_content,
@@ -42,8 +43,8 @@ class TranscriptionWorker(QThread):
         max_segment_length: float = 4.5,
         min_segment_length: float = 0.25,
         silence_thresh_db: float = -38.0,
-        max_speech_chunk_duration: float = 14.0,
-        boundary_padding_s: float = 0.25,
+        max_speech_chunk_duration: float = 7.0,
+        boundary_padding_s: float = 0.15,
         batch_size: Optional[int] = None,
         parent=None
     ):
@@ -209,6 +210,9 @@ class TranscriptionWorker(QThread):
 
             # Stage 3: Subtitle Alignment & Pacing Refinement
             self.sig_progress.emit(self.file_id, 3, "3/3 Aligning timestamps & subtitle pacing", 70.0)
+
+            # Strip boundary duplicate phrases and repetition loops across chunks
+            raw_segments = deduplicate_raw_segments(raw_segments)
 
             primary_lang = "Unknown"
             if detected_languages:
