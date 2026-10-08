@@ -369,7 +369,7 @@ def _group_aligned_items_into_cues(
     max_chars: int,
     max_duration: float = 4.5,
     min_duration: float = 0.3,
-    lead_in: float = 0.06,
+    lead_in: float = 0.0,
     lang: str = "Unknown"
 ) -> List[Dict[str, Any]]:
     """
@@ -452,15 +452,14 @@ def refine_subtitles_for_pacing(
     max_chars_cjk: int = 18,
     max_duration: float = 4.5,
     min_duration: float = 0.3,
-    lead_in: float = 0.06
+    lead_in: float = 0.0
 ) -> List[Dict[str, Any]]:
     """
     Post-processes subtitle segments to adhere to optimal pacing standards:
     - Target 2.0 to 4.5s per cue
     - Max 42 characters per line for Latin scripts, 18 characters for CJK
     - Uses exact token/word timestamps when forced aligner data is present
-    - Uses acoustic RMS pause valleys to anchor clause splits when available
-    - Proportionally interpolates timestamps across split cues with visual lead-in
+    - Uses acoustic RMS pause valleys with true silence gapping to anchor clause splits
     - Re-numbers cues sequentially
     """
     refined: List[Dict[str, Any]] = []
@@ -473,7 +472,7 @@ def refine_subtitles_for_pacing(
 
         raw_start = float(seg.get("start", 0.0))
         raw_end = float(seg.get("end", raw_start + 1.0))
-        # Apply standard broadcast visual cognitive lead-in (60ms)
+        # Anchor cue onset directly to speech onset without artificial pre-display lead-in
         start_time = max(0.0, raw_start - lead_in)
         end_time = max(raw_end, start_time + min_duration)
         duration = max(min_duration, end_time - start_time)
@@ -539,21 +538,25 @@ def refine_subtitles_for_pacing(
             if i == len(chunks) - 1:
                 c_start = cursor_time
                 c_end = end_time
+                next_cursor = end_time
             else:
                 nominal_end = start_time + duration * (cum_chars / total_chars)
                 # Energy Pause Snapping: find nearest acoustic pause trough
-                best_pause_cut = None
+                best_pause = None
                 if pauses:
                     for p_s, p_e in pauses:
                         p_mid = (p_s + p_e) / 2.0
-                        if abs(p_mid - nominal_end) <= 1.2:
-                            if best_pause_cut is None or abs(p_mid - nominal_end) < abs(best_pause_cut - nominal_end):
-                                best_pause_cut = p_mid
+                        if abs(p_mid - nominal_end) <= 1.5:
+                            if best_pause is None or abs(p_mid - nominal_end) < abs(((best_pause[0] + best_pause[1]) / 2.0) - nominal_end):
+                                best_pause = (p_s, p_e)
 
-                if best_pause_cut is not None:
-                    c_end = max(cursor_time + min_duration, min(best_pause_cut, end_time - min_duration))
+                if best_pause is not None:
+                    p_s, p_e = best_pause
+                    c_end = max(cursor_time + min_duration, min(p_s, end_time - min_duration))
+                    next_cursor = max(c_end, p_e)
                 else:
-                    c_end = nominal_end
+                    c_end = max(cursor_time + min_duration, min(nominal_end, end_time - min_duration))
+                    next_cursor = c_end
 
                 c_start = cursor_time
                 c_end = max(c_end, c_start + min_duration)
@@ -570,7 +573,7 @@ def refine_subtitles_for_pacing(
                 "language": lang
             })
             cue_id += 1
-            cursor_time = c_end
+            cursor_time = next_cursor
 
     # Final pass: deduplicate consecutive identical cues and re-index sequentially
     final_refined: List[Dict[str, Any]] = []

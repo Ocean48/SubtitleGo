@@ -124,7 +124,7 @@ def extract_audio_to_wav(input_path: str, output_path: str, sample_rate: int = 1
             "-acodec", "pcm_s16le",
             "-ar", str(sample_rate),
             "-ac", "1",
-            "-af", "aresample=async=1:first_pts=0,highpass=f=120,lowpass=f=4000,dynaudnorm=f=75:g=15:m=4.0",
+            "-af", "highpass=f=120,lowpass=f=4000,dynaudnorm=f=75:g=15:m=4.0",
             output_path
         ]
         res = run_ffmpeg(conditioned_args)
@@ -467,8 +467,8 @@ def detect_speech_intervals_vad(
     sr: int = 16000,
     threshold: float = 0.50,
     min_speech_duration_s: float = 0.25,
-    min_silence_duration_s: float = 0.30,
-    speech_pad_s: float = 0.05
+    min_silence_duration_s: float = 0.25,
+    speech_pad_s: float = 0.01
 ) -> Optional[List[Tuple[float, float]]]:
     """
     Detects true human speech intervals using neural Silero VAD.
@@ -541,7 +541,7 @@ def segment_audio_smart(
     wav_path: str,
     max_segment_duration: float = 7.0,
     min_segment_duration: float = 0.25,
-    min_silence_duration: float = 0.30,
+    min_silence_duration: float = 0.25,
     silence_thresh_db: float = -38.0,
     boundary_padding_s: float = 0.15,
     audio_data: Optional[Any] = None,
