@@ -35,12 +35,12 @@ Audio is extracted and conditioned prior to analysis to ensure consistent signal
 ```bash
 ffmpeg -hide_banner -loglevel error -y -i "<input_path>" \
     -vn -acodec pcm_s16le -ar 16000 -ac 1 \
-    -af "highpass=f=120,lowpass=f=4000,dynaudnorm=f=75:g=15:m=4.0" \
+    -af "aresample=async=1:first_pts=0,highpass=f=120,lowpass=f=4000,dynaudnorm=f=75:g=15:m=4.0" \
     "<output_path>"
 ```
 
 ### 2.2. Audio Conditioning Components
-- **Native Container PTS Preservation**: Extracts audio samples preserving native container timestamps without artificial padding or stretching, ensuring exact timestamp synchronicity between media playback and generated subtitle cues.
+- **PTS Synchronization (`aresample=async=1:first_pts=0`)**: Resamples and locks audio samples to video Presentation Time Stamps (PTS). This prevents gradual audio/video desynchronization on Variable Frame Rate (VFR) recordings commonly captured by smartphones, webcams, and screen recorders.
 - **Vocal Bandpass (`highpass=f=120,lowpass=f=4000`)**: Cuts deep mechanical rumble (<120 Hz) and high-frequency electronic hiss (>4000 Hz), preserving the core frequencies required for human speech recognition.
 - **Dynamic Audio Normalization (`dynaudnorm=f=75:g=15:m=4.0`)**: Continuously normalizes volume fluctuations without peak clipping. The maximum gain boost is calibrated to `m=4.0` (~12 dB) to ensure whispers are audible while preventing quiet background music and ambient soundtracks from being over-amplified into speech candidates.
 - **Format Standard**: 16-bit little-endian uncompressed PCM (`pcm_s16le`), 16 kHz sample rate, mono channel (`ac=1`).
@@ -133,10 +133,10 @@ SubtitleGo decouples the ASR audio chunk size (`8.0s`) from the visual subtitle 
 ### 5.3. Neural Forced Alignment & Word/Token Timestamp Grouping
 When forced alignment is active (`Qwen3ForcedAligner`), the model outputs millisecond-accurate timestamps for each word and CJK token. `_group_aligned_items_into_cues()` groups consecutive tokens into cues constrained by maximum line length, visual duration limits ($0.5s - 4.5s$), sentence ends, and conversational turnover pauses. Users can install the aligner via the Setup Wizard or Model Setup Dialog.
 
-### 5.4. Acoustic Silence Gapping & Pause Snapping
+### 5.4. Acoustic Pause Snapping & Visual Lead-In Calibration
 When forced alignment is inactive, SubtitleGo uses high-precision acoustic snapping:
-- **Speech-Anchored Cue Onset (`lead_in = 0.0s`)**: Cues are anchored strictly to the physical onset of speech, eliminating premature subtitle popping and preventing the text from racing ahead of audio.
-- **True Acoustic Silence Gapping**: When a sentence or clause is split across an intra-utterance breath or pause (`p_start`, `p_end`), the preceding cue terminates at `p_start` (when speech ceases) and the next cue is deferred until `p_end` (when vocalization resumes). This maintains an empty on-screen interval during pauses rather than displaying the next cue early.
+- **Broadcast Standard Visual Lead-In (`lead_in = 60ms`)**: Advances cue onset by 60ms for optimal human reading perception without premature bleeding.
+- **Acoustic Pause Snapping**: When a sentence is split at punctuation marks (`,`, `.`, `!`, `?`, `。`, `，`), the boundary is snapped to the nearest intra-chunk RMS energy valley/breath pause rather than relying solely on linear character ratio.
 - **Proportional Fallback**: In the absence of an acoustic pause, duration is distributed proportionally by character weight across tightly bounded speech spans ($5.5s - 7.0s$) and clamped between `min_duration = 0.3s` and `max_duration = 4.5s`.
 
 ---
@@ -150,12 +150,12 @@ When forced alignment is inactive, SubtitleGo uses high-precision acoustic snapp
 - Supports concurrent jobs, real-time progress reporting, pause/stop/retry operations, and queue reordering.
 
 ### 6.2. VLC & Media Player Auto-Discovery Export
-When auto-save is enabled, SubtitleGo saves subtitle tracks directly alongside the source media file following standard VLC/Plex/media player auto-discovery naming conventions:
-- `<video_base_name>.<lang_code>.srt`: Language-tagged SubRip subtitle track (e.g. `video.en.srt`, `video.zh.srt`, `video.ja.srt`). Media players automatically identify the track language without creating duplicate unlabelled tracks.
-- `<video_base_name>.<lang_code>.vtt`: Language-tagged WebVTT subtitle track for web and modern media players.
-- `<video_base_name>.srt` / `<video_base_name>.vtt`: Clean fallback if language is undetermined.
-- `<video_base_name>.<lang_code>.txt`: Plain text transcript with timestamps for archival or note-taking.
-- **Batch Export**: `export_zip()` packages all completed subtitles across the queue into a single ZIP archive adhering to the same language-tagged naming schema.
+When auto-save is enabled, SubtitleGo saves subtitle tracks directly alongside the source media file following standard VLC/media player auto-discovery naming conventions:
+- `<video_base_name>.srt`: Default primary SubRip subtitle track.
+- `<video_base_name>.<lang_code>.srt`: Language-tagged track (e.g. `video.en.srt`, `video.zh.srt`, `video.ja.srt`). Media players automatically identify the track language without requiring user configuration.
+- `<video_base_name>.vtt`: Standard WebVTT subtitle track for web players.
+- `<video_base_name>.txt`: Plain text transcript with timestamps for archival or note-taking.
+- **Batch Export**: `export_zip()` packages all completed subtitles across the queue into a single ZIP archive.
 
 ---
 
@@ -186,10 +186,10 @@ SubtitleGo provides a native PySide6 desktop interface for monitoring and editin
 | `min_segment_duration` | `0.25 s` | `audio_processor.py` | Minimum duration required for an interval (retains short speech, drops pops) |
 | `boundary_padding_s` | `0.15 s` (150 ms) | `audio_processor.py` / `transcription_worker.py` | Acoustic boundary safety padding for silence-bounded speech |
 | `internal_padding_s` | `0.02 s` (20 ms) | `audio_processor.py` | Tapered boundary padding between contiguous subdivided chunks |
-| `lead_in` | `0.0 s` (0 ms) | `subtitle_formatter.py` | Anchored strictly to acoustic speech onset to prevent pre-display racing |
+| `lead_in` | `0.06 s` (60 ms) | `subtitle_formatter.py` | Broadcast standard visual cognitive lead-in for on-screen cues |
 | Audio Sample Rate | `16000 Hz` | `audio_processor.py` | Standard 16 kHz audio sampling rate for Qwen3-ASR |
 | Audio Channels | `1` (Mono) | `audio_processor.py` | Single-channel PCM audio for optimal model efficiency |
-| Audio Filters | `bandpass (120-4000Hz) + dynaudnorm(m=4.0)` | `audio_processor.py` | Audio conditioning chain for vocal isolation and controlled volume leveling |
+| Audio Filters | `aresample + bandpass + dynaudnorm(m=4.0)` | `audio_processor.py` | Audio conditioning chain for PTS sync, vocal isolation, and dynamic volume leveling |
 | `max_segment_length` (Cue) | `4.5 s` | `settings_panel.py` / `subtitle_formatter.py` | Maximum on-screen display duration for a single subtitle cue |
 | `min_cue_duration` | `0.3 s` | `subtitle_formatter.py` | Minimum duration for a single subtitle cue |
 | `max_chars_latin` | `42` characters | `subtitle_formatter.py` | Maximum characters per subtitle line for Latin scripts |
