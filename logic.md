@@ -151,11 +151,10 @@ When forced alignment is inactive, SubtitleGo uses high-precision acoustic snapp
 
 ### 6.2. VLC & Media Player Auto-Discovery Export
 When auto-save is enabled, SubtitleGo saves subtitle tracks directly alongside the source media file following standard VLC/media player auto-discovery naming conventions:
-- `<video_base_name>.srt`: Default primary SubRip subtitle track.
-- `<video_base_name>.<lang_code>.srt`: Language-tagged track (e.g. `video.en.srt`, `video.zh.srt`, `video.ja.srt`). Media players automatically identify the track language without requiring user configuration.
-- `<video_base_name>.vtt`: Standard WebVTT subtitle track for web players.
-- `<video_base_name>.txt`: Plain text transcript with timestamps for archival or note-taking.
-- **Batch Export**: `export_zip()` packages all completed subtitles across the queue into a single ZIP archive.
+- `<video_base_name>.<lang_code>.srt`: Language-tagged SubRip subtitle track (e.g. `video.en.srt`, `video.zh.srt`, `video.ja.srt`). Resolved from the user's selected language in Settings if specified, or dynamically from the speech model's detected language. Falls back to `<video_base_name>.srt` if the language is unknown.
+- `<video_base_name>.<lang_code>.vtt`: Language-tagged WebVTT subtitle track for web players.
+- `<video_base_name>.<lang_code>.txt`: Plain text transcript with timestamps for archival or note-taking.
+- **Batch Export**: `export_zip()` packages all completed subtitles across the queue into a single ZIP archive with language tags.
 
 ---
 

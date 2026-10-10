@@ -10,7 +10,7 @@ from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 
 from .styles import get_theme_qss
 from ..__version__ import __title__, __version__
-from ..core.queue_manager import QueueManager
+from ..core.queue_manager import QueueManager, resolve_language_code, get_effective_language
 from ..core.subtitle_formatter import build_srt_content, build_vtt_content
 from .widgets.header_bar import HeaderBar
 from .widgets.settings_panel import SettingsPanel
@@ -517,8 +517,14 @@ class MainWindow(QMainWindow):
             return
         default_name = "subtitles.srt"
         if self.active_file_id and self.active_file_id in self.queue_mgr.items:
-            base = os.path.splitext(self.queue_mgr.items[self.active_file_id]["filename"])[0]
-            default_name = f"{base}.srt"
+            item = self.queue_mgr.items[self.active_file_id]
+            base = os.path.splitext(item["filename"])[0]
+            settings_lang = self.settings_panel.get_settings().get("language")
+            res_lang = (item.get("result") or {}).get("language")
+            effective_lang = get_effective_language(settings_lang, res_lang)
+            code = resolve_language_code(effective_lang)
+            suffix = f".{code}" if code else ""
+            default_name = f"{base}{suffix}.srt"
 
         path, _ = QFileDialog.getSaveFileName(self, "Export Subtitles (SRT)", default_name, "SubRip Subtitle (*.srt)")
         if path:
@@ -532,8 +538,14 @@ class MainWindow(QMainWindow):
             return
         default_name = "subtitles.vtt"
         if self.active_file_id and self.active_file_id in self.queue_mgr.items:
-            base = os.path.splitext(self.queue_mgr.items[self.active_file_id]["filename"])[0]
-            default_name = f"{base}.vtt"
+            item = self.queue_mgr.items[self.active_file_id]
+            base = os.path.splitext(item["filename"])[0]
+            settings_lang = self.settings_panel.get_settings().get("language")
+            res_lang = (item.get("result") or {}).get("language")
+            effective_lang = get_effective_language(settings_lang, res_lang)
+            code = resolve_language_code(effective_lang)
+            suffix = f".{code}" if code else ""
+            default_name = f"{base}{suffix}.vtt"
 
         path, _ = QFileDialog.getSaveFileName(self, "Export Subtitles (WebVTT)", default_name, "WebVTT Subtitle (*.vtt)")
         if path:

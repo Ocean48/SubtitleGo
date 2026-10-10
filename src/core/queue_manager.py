@@ -7,6 +7,93 @@ from PySide6.QtCore import QObject, Signal
 from .transcription_worker import TranscriptionWorker
 
 
+LANG_CODE_MAP = {
+    "english": "en",
+    "chinese": "zh",
+    "cantonese": "yue",
+    "japanese": "ja",
+    "korean": "ko",
+    "spanish": "es",
+    "french": "fr",
+    "german": "de",
+    "russian": "ru",
+    "arabic": "ar",
+    "portuguese": "pt",
+    "italian": "it",
+    "indonesian": "id",
+    "thai": "th",
+    "vietnamese": "vi",
+    "turkish": "tr",
+    "hindi": "hi",
+    "malay": "ms",
+    "dutch": "nl",
+    "swedish": "sv",
+    "danish": "da",
+    "finnish": "fi",
+    "polish": "pl",
+    "czech": "cs",
+    "filipino": "fil",
+    "persian": "fa",
+    "greek": "el",
+    "hungarian": "hu",
+    "macedonian": "mk",
+    "romanian": "ro",
+    "anhui": "zh-anhui",
+    "dongbei": "zh-dongbei",
+    "fujian": "zh-min",
+    "gansu": "zh-gansu",
+    "guizhou": "zh-guizhou",
+    "hebei": "zh-hebei",
+    "henan": "zh-henan",
+    "hubei": "zh-hubei",
+    "hunan": "zh-xiang",
+    "jiangxi": "zh-gan",
+    "ningxia": "zh-ningxia",
+    "shandong": "zh-shandong",
+    "shaanxi": "zh-shaanxi",
+    "shanxi": "zh-shanxi",
+    "sichuan": "zh-sichuan",
+    "tianjin": "zh-tianjin",
+    "yunnan": "zh-yunnan",
+    "zhejiang": "zh-wu",
+    "cantonese (hong kong)": "zh-hk",
+    "cantonese (guangdong)": "yue",
+    "wu": "wuu",
+    "minnan": "nan",
+}
+
+
+def resolve_language_code(lang: Optional[str]) -> Optional[str]:
+    """Resolves language name into standardized ISO-style language tag."""
+    if not lang:
+        return None
+    cleaned = str(lang).strip().lower()
+    if cleaned in ("unknown", "auto", "auto detect", "none", ""):
+        return None
+    if cleaned in LANG_CODE_MAP:
+        return LANG_CODE_MAP[cleaned]
+    if len(cleaned) in (2, 3) and cleaned.isalpha():
+        return cleaned
+    if "-" in cleaned or "_" in cleaned:
+        parts = cleaned.replace("_", "-").split("-")
+        if all(p.isalnum() for p in parts):
+            return "-".join(parts)
+    return cleaned[:2] if len(cleaned) >= 2 and cleaned[:2].isalpha() else None
+
+
+def get_effective_language(settings_language: Optional[str], result_language: Optional[str]) -> Optional[str]:
+    """
+    Determines effective language for subtitle naming.
+    Prioritizes user-selected language in settings if chosen.
+    Otherwise falls back to the language returned by the speech model.
+    """
+    if settings_language and str(settings_language).strip().lower() not in ("auto", "auto detect", "none", ""):
+        return str(settings_language).strip()
+    if result_language and str(result_language).strip().lower() not in ("unknown", "auto", "auto detect", "none", ""):
+        return str(result_language).strip()
+    return None
+
+
 class QueueManager(QObject):
     """
     Manages batch transcription tasks, concurrency limits, and auto-saving.
@@ -294,30 +381,23 @@ class QueueManager(QObject):
                 self.sig_batch_finished.emit()
 
     def _auto_save_subtitles(self, media_path: str, result: Dict[str, Any]):
-        """Writes .srt, language-specific .srt (for VLC/media players), and .vtt directly adjacent to media file."""
+        """Writes language-tagged .srt and .vtt directly adjacent to media file."""
         try:
             base_dir = os.path.dirname(media_path)
             base_name = os.path.splitext(os.path.basename(media_path))[0]
-            
-            srt_path = os.path.join(base_dir, f"{base_name}.srt")
-            vtt_path = os.path.join(base_dir, f"{base_name}.vtt")
+
+            settings_lang = self._current_settings.get("language")
+            result_lang = result.get("language")
+            effective_lang = get_effective_language(settings_lang, result_lang)
+            code = resolve_language_code(effective_lang)
+            suffix = f".{code}" if code else ""
+
+            srt_path = os.path.join(base_dir, f"{base_name}{suffix}.srt")
+            vtt_path = os.path.join(base_dir, f"{base_name}{suffix}.vtt")
 
             if result.get("srt"):
                 with open(srt_path, "w", encoding="utf-8") as f:
                     f.write(result["srt"])
-
-                # Language-tagged SRT track for VLC auto-discovery (e.g. movie.en.srt, movie.zh.srt)
-                lang = (result.get("language") or "").strip().lower()
-                lang_map = {
-                    "english": "en", "chinese": "zh", "cantonese": "yue", "japanese": "ja",
-                    "korean": "ko", "spanish": "es", "french": "fr", "german": "de",
-                    "russian": "ru", "arabic": "ar", "portuguese": "pt", "italian": "it"
-                }
-                code = lang_map.get(lang, lang[:2] if len(lang) >= 2 and lang != "unknown" else None)
-                if code:
-                    lang_srt_path = os.path.join(base_dir, f"{base_name}.{code}.srt")
-                    with open(lang_srt_path, "w", encoding="utf-8") as f:
-                        f.write(result["srt"])
 
             if result.get("vtt"):
                 with open(vtt_path, "w", encoding="utf-8") as f:
@@ -326,7 +406,7 @@ class QueueManager(QObject):
             print(f"Auto-save warning: failed to write subtitles for {media_path}: {e}")
 
     def export_zip(self, zip_path: str) -> bool:
-        """Exports all completed subtitles into a single ZIP file."""
+        """Exports all completed subtitles into a single ZIP file with language tags."""
         completed_items = [it for it in self.items.values() if it["status"] == "completed" and it.get("result")]
         if not completed_items:
             return False
@@ -335,10 +415,17 @@ class QueueManager(QObject):
             for it in completed_items:
                 res = it["result"]
                 base_name = os.path.splitext(it["filename"])[0]
+
+                settings_lang = self._current_settings.get("language")
+                result_lang = res.get("language")
+                effective_lang = get_effective_language(settings_lang, result_lang)
+                code = resolve_language_code(effective_lang)
+                suffix = f".{code}" if code else ""
+
                 if res.get("srt"):
-                    zf.writestr(f"{base_name}.srt", res["srt"])
+                    zf.writestr(f"{base_name}{suffix}.srt", res["srt"])
                 if res.get("vtt"):
-                    zf.writestr(f"{base_name}.vtt", res["vtt"])
+                    zf.writestr(f"{base_name}{suffix}.vtt", res["vtt"])
                 if res.get("txt"):
-                    zf.writestr(f"{base_name}.txt", res["txt"])
+                    zf.writestr(f"{base_name}{suffix}.txt", res["txt"])
         return True
