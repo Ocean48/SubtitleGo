@@ -61,14 +61,11 @@ highpass=f=180,lowpass=f=3500,silencedetect=noise=-38dB:d=0.30
 - **Lowpass (`3500 Hz`)**: Eliminates high-frequency sizzles and room echo above human vocal ranges.
 - **`silencedetect=noise=-38dB:d=0.30`**: Identifies periods where vocal-range volume remains below `-38 dB` for at least `0.30 seconds` as a pause. This captures natural conversational turn-taking (where one speaker/character finishes talking and another begins) and sentence terminations without merging distinct speakers into run-on utterances.
 
-### 3.2. Speech Inversion, Boundary Decoupling & Padding
+### 3.2. Speech Inversion, Boundary Decoupling & Asymmetric Padding
 - Silence boundaries (`silence_start`, `silence_end`) are inverted to extract active speech intervals `[current_pos, s_start]`.
-- **Phoneme Safety Boundary Padding (`boundary_padding_s = 0.20s`)**: Every detected segment is padded by **+200 ms at the start** and **+200 ms at the end** strictly for the ASR audio extraction window:
-  ```python
-  pad_start = max(0.0, current_pos - boundary_padding_s)
-  pad_end = min(total_duration, s_start + boundary_padding_s)
-  ```
-  This prevents clipping initial plosive consonants (e.g. *p*, *t*, *k*) and trailing word decays without leaking premature display lead-time into the visual subtitle timestamps.
+- **Asymmetric Boundary Safety Padding**:
+  - External boundaries bordering true silence intervals receive **+200 ms safety padding** to prevent clipping initial plosives and trailing decays.
+  - Internal subdivision cuts between contiguous speech sub-spans use **zero / minimal padding ($\le 20\text{ ms}$)**, eliminating cross-chunk audio overlap that would otherwise cause words at the cut boundary to be recognized twice.
 - **SpeechInterval Structured Metadata**: `SpeechInterval` tracks true acoustic speech bounds (`start`, `end`) separate from the extraction window (`pad_start`, `pad_end`), alongside intra-segment micro-pauses (`pauses`).
 - **Short Speech Retention (`min_segment_duration = 0.25s`)**: Short affirmations, interjections, and brief words ($\ge 0.25s$) are retained while brief electrical pops (< 0.25s) are rejected.
 
@@ -138,6 +135,15 @@ When forced alignment is inactive, SubtitleGo uses high-precision acoustic snapp
 - **Broadcast Standard Visual Lead-In (`lead_in = 60ms`)**: Advances cue onset by 60ms for optimal human reading perception without premature 250ms bleeding.
 - **Acoustic Pause Snapping**: When a sentence is split at punctuation marks (`,`, `.`, `!`, `?`, `。`, `，`), the boundary is snapped to the nearest intra-chunk RMS energy valley/breath pause rather than relying solely on linear character ratio.
 - **Proportional Fallback**: In the absence of an acoustic pause, duration is distributed proportionally by character weight and clamped between `min_duration = 0.3s` and `max_duration = 4.5s`.
+
+### 5.4. Cross-Segment Deduplication & Syntactic Phrasing
+- **Cross-Segment Boundary Deduplication (`deduplicate_raw_segments()`)**:
+  - Latin word-level n-gram matcher strips duplicate prefix words in segment $N+1$ that overlapped with the tail of segment $N$.
+  - CJK character-level matcher strips duplicate leading characters across contiguous cuts.
+  - Collapses intra-cue hallucinated repetition loops (e.g. repeated words or phrases).
+- **Hierarchical Syntactic Phrasing (`_split_text_into_chunks()`)**:
+  - Latin: Splits preferentially at clause punctuation, coordinating conjunctions, and prepositions, preventing orphan articles or pronouns at line ends.
+  - CJK: Respects grammatical particles (`的`, `了`, `着`, `所以`, `は`, `が`, `に`, `で`) to preserve natural compound words and grammatical units.
 
 ---
 

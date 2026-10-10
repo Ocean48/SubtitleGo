@@ -263,7 +263,8 @@ def init_runtime_environment():
     # Configure PyTorch inference optimizations
     os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
     os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
-    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    if sys.platform.startswith("linux"):
+        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 
 def check_runtime_status() -> Tuple[bool, str]:

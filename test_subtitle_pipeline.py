@@ -1,6 +1,7 @@
 import io
 import math
 import os
+import re
 import struct
 import sys
 import tempfile
@@ -19,6 +20,10 @@ from src.core.subtitle_formatter import (
     build_vtt_content,
     refine_subtitles_for_pacing,
     _group_aligned_items_into_cues,
+    remove_repetition_loops,
+    deduplicate_chunk_boundary,
+    deduplicate_raw_segments,
+    _split_text_into_chunks,
 )
 from src.core.audio_processor import (
     segment_audio_smart,
@@ -384,6 +389,94 @@ def test_forced_alignment_cue_grouping_and_pause_snapping():
     print(f"      PASS: Forced alignment token grouping ({len(cues)} cues) and pause snapping ({first_cue_end}s) verified.")
 
 
+def test_deduplication_and_repetition_removal():
+    print("[10/12] Testing boundary deduplication & repetition loop suppression...")
+    # 1. Repetition loop suppression
+    rep_latin = remove_repetition_loops("Thank you. Thank you. Thank you.")
+    assert rep_latin == "Thank you.", f"Expected 'Thank you.', got '{rep_latin}'"
+
+    rep_word = remove_repetition_loops("yes yes yes we can do this")
+    assert rep_word == "yes we can do this", f"Expected 'yes we can do this', got '{rep_word}'"
+
+    rep_cjk = remove_repetition_loops("好的好的好的好的")
+    assert rep_cjk == "好的", f"Expected '好的', got '{rep_cjk}'"
+
+    # 2. Boundary word deduplication across chunks (Latin)
+    prev_seg = "I think that this is a great idea and"
+    curr_seg = "idea and we should definitely do it."
+    deduped_latin = deduplicate_chunk_boundary(prev_seg, curr_seg, is_cjk=False)
+    assert deduped_latin == "we should definitely do it.", f"Expected overlap stripped, got '{deduped_latin}'"
+
+    # 3. Boundary character deduplication across chunks (CJK)
+    prev_cjk = "我们在讨论人工智能的发展前景"
+    curr_cjk = "发展前景非常广阔"
+    deduped_cjk = deduplicate_chunk_boundary(prev_cjk, curr_cjk, is_cjk=True)
+    assert deduped_cjk == "非常广阔", f"Expected CJK overlap stripped, got '{deduped_cjk}'"
+
+    # 4. Multi-segment pipeline deduplication
+    raw_segments = [
+        {"id": 1, "start": 0.0, "end": 4.0, "text": "I think this is a great idea and", "language": "English"},
+        {"id": 2, "start": 3.8, "end": 7.0, "text": "idea and we should definitely do it.", "language": "English"},
+        {"id": 3, "start": 6.8, "end": 9.0, "text": "we should definitely do it.", "language": "English"}  # full duplicate
+    ]
+    cleaned = deduplicate_raw_segments(raw_segments)
+    assert len(cleaned) == 2, f"Expected redundant third segment to be dropped, got {len(cleaned)}"
+    assert cleaned[1]["text"] == "we should definitely do it."
+    print("      PASS: Repetition loops and cross-chunk boundary duplicates successfully removed.")
+
+
+def test_natural_linguistic_phrase_splitting():
+    print("[11/12] Testing natural linguistic and syntactic phrase splitting...")
+    # 1. Latin phrasing without orphan weak endings
+    long_latin = "We are planning to go to the grocery store and buy some fresh apples and oranges tomorrow morning."
+    latin_chunks = _split_text_into_chunks(long_latin, max_chars=42)
+    assert len(latin_chunks) >= 2, f"Expected multiple chunks, got {latin_chunks}"
+    for c in latin_chunks:
+        assert len(c) <= 42, f"Chunk exceeded max chars (42): '{c}'"
+        # Check no chunk ends with a weak orphan article like 'the', 'a', 'to'
+        assert not re.search(r'\b(the|a|an)\s*$', c, re.IGNORECASE), f"Orphan article found at end of chunk: '{c}'"
+
+    # 2. CJK phrasing preserving grammatical units
+    long_cjk = "今天的天气非常不错所以我们打算一起去公园散步然后看电影"
+    cjk_chunks = _split_text_into_chunks(long_cjk, max_chars=18)
+    assert len(cjk_chunks) >= 2, f"Expected multiple CJK chunks, got {cjk_chunks}"
+    for c in cjk_chunks:
+        assert len(c) <= 18, f"CJK chunk exceeded max chars (18): '{c}'"
+    # First chunk should naturally break after '所以' or similar particle
+    assert "所以" in cjk_chunks[0], f"Expected clean break after particle, got: {cjk_chunks[0]}"
+
+    print(f"      PASS: Latin ({len(latin_chunks)} chunks) and CJK ({len(cjk_chunks)} chunks) phrasing verified.")
+
+
+def test_asymmetric_boundary_padding():
+    print("[12/12] Testing asymmetric boundary padding for internal subdivision cuts...")
+    import numpy as np
+    sr = 16000
+    # Continuous tone of 15 seconds (exceeds max_segment_duration of 6.0s)
+    # Tests that internal cuts do not produce large 500ms overlap
+    audio = 0.4 * np.sin(2 * np.pi * 440 * (np.arange(sr * 14) / sr)).astype(np.float32)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".longtone.wav") as tmp:
+        import soundfile as sf
+        sf.write(tmp.name, audio, sr, subtype="PCM_16")
+        tmp_path = tmp.name
+
+    try:
+        intervals = segment_audio_smart(tmp_path, max_segment_duration=6.0, boundary_padding_s=0.25)
+        assert len(intervals) >= 2, f"Expected continuous speech to subdivide, got {len(intervals)}"
+        # Check that between internal sub-spans, pad_start and pad_end do not heavily overlap
+        for idx in range(len(intervals) - 1):
+            curr_item = intervals[idx]
+            next_item = intervals[idx + 1]
+            # Overlap between curr_item's pad_end and next_item's pad_start
+            overlap = curr_item.pad_end - next_item.pad_start
+            # With asymmetric padding, internal cuts have <= 0.05s overlap (instead of 0.50s)
+            assert overlap <= 0.06, f"Internal cut overlap too large ({overlap:.3f}s), expected <= 0.05s"
+        print(f"      PASS: Internal subdivision cuts have minimal overlap (<= 0.05s vs previous 0.50s).")
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
 def main():
     print("==================================================")
     print(" Running SubtitleGo Pipeline & Unit Tests")
@@ -397,6 +490,9 @@ def main():
     test_acoustic_energy_envelope_and_valley_subdivider()
     test_conversational_turnover_and_speech_interval_metadata()
     test_forced_alignment_cue_grouping_and_pause_snapping()
+    test_deduplication_and_repetition_removal()
+    test_natural_linguistic_phrase_splitting()
+    test_asymmetric_boundary_padding()
     print("==================================================")
     print(" All SubtitleGo verification tests PASSED.")
     print("==================================================")

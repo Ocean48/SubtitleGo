@@ -505,10 +505,21 @@ def segment_audio_smart(
         else:
             sub_spans = [(sp_start, sp_end)]
 
-        for sub_s, sub_e in sub_spans:
-            # Padded bounds for ASR acoustic context
-            pad_s = max(0.0, sub_s - boundary_padding_s)
-            pad_e = min(duration, sub_e + boundary_padding_s)
+        total_sub = len(sub_spans)
+        for idx, (sub_s, sub_e) in enumerate(sub_spans):
+            # Asymmetric Acoustic Padding:
+            # - If this is an external boundary bordering silence or audio edges, apply boundary_padding_s.
+            # - If this is an internal subdivision cut between contiguous speech sub-spans,
+            #   do NOT bleed padding across the cut point (limit to <= 20ms) to eliminate
+            #   cross-chunk audio overlap that causes ASR to transcribe duplicate words in both cues.
+            is_internal_start = (idx > 0)
+            is_internal_end = (idx < total_sub - 1)
+
+            left_pad = 0.02 if is_internal_start else boundary_padding_s
+            right_pad = 0.02 if is_internal_end else boundary_padding_s
+
+            pad_s = max(0.0, sub_s - left_pad)
+            pad_e = min(duration, sub_e + right_pad)
 
             # Find intra-segment micro-pauses for clause alignment
             pauses = []
