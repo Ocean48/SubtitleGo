@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar,
     QPushButton, QRadioButton, QButtonGroup, QFrame, QMessageBox,
-    QStackedWidget, QPlainTextEdit, QApplication, QCheckBox
+    QStackedWidget, QPlainTextEdit, QApplication
 )
 from PySide6.QtCore import QThread, Signal, Qt
 from PySide6.QtGui import QTextCursor
@@ -21,10 +21,7 @@ from ...core.runtime_manager import (
 from ...core.model_manager import (
     is_model_downloaded,
     download_model_weights,
-    get_model_dir,
-    is_forced_aligner_downloaded,
-    download_forced_aligner_weights,
-    get_forced_aligner_dir
+    get_model_dir
 )
 from ..styles import get_theme_qss
 
@@ -36,12 +33,11 @@ class SetupWorker(QThread):
     sig_finished = Signal()
     sig_error = Signal(str)
 
-    def __init__(self, target_runtime: str, need_runtime: bool, need_model: bool, need_aligner: bool = False, parent=None):
+    def __init__(self, target_runtime: str, need_runtime: bool, need_model: bool, parent=None):
         super().__init__(parent)
         self.target_runtime = target_runtime
         self.need_runtime = need_runtime
         self.need_model = need_model
-        self.need_aligner = need_aligner
         self.cancel_event = threading.Event()
 
     def cancel(self):
@@ -104,23 +100,6 @@ class SetupWorker(QThread):
                     raise RuntimeError("Model download completed but weights failed integrity check.")
 
                 self._emit_log("Stage 2 completed: Model weights verified successfully.")
-
-            # Optional Stage: Forced Aligner download
-            if self.need_aligner:
-                self.sig_stage_changed.emit("Downloading Qwen3-ForcedAligner Weights...")
-                self._emit_log("Downloading Qwen3-ForcedAligner timestamp alignment weights (~1.2 GB)...")
-
-                def aligner_progress_cb(msg, pct):
-                    self.sig_progress.emit(msg, 90.0 + (pct * 0.1))
-
-                def aligner_log_cb(msg):
-                    self._emit_log(msg)
-
-                download_forced_aligner_weights(
-                    progress_callback=aligner_progress_cb,
-                    log_callback=aligner_log_cb
-                )
-                self._emit_log("Forced Aligner weights verified successfully.")
 
             if self.cancel_event.is_set():
                 self._emit_log("Setup cancelled by user.")
@@ -280,11 +259,6 @@ class SetupWizardDialog(QDialog):
                     self.rb_primary.setEnabled(False)
                     self.rb_primary.setText("NVIDIA GPU Acceleration (No supported NVIDIA GPU detected)")
 
-        self.chk_aligner = QCheckBox("Include Qwen3-ForcedAligner for millisecond token sync (~1.2 GB)")
-        self.chk_aligner.setChecked(not is_forced_aligner_downloaded())
-        self.chk_aligner.setStyleSheet("font-size: 12px; color: #cbd5e1; margin-top: 6px;")
-        page_sel_layout.addWidget(self.chk_aligner)
-
         page_sel_layout.addStretch()
         self.stack.addWidget(self.page_selection)
 
@@ -383,12 +357,10 @@ class SetupWizardDialog(QDialog):
                     or (target_runtime == "cpu" and rt_info.get("cuda_available", False))
                 )
 
-            need_fa = self.chk_aligner.isChecked() and not is_forced_aligner_downloaded()
             self.worker = SetupWorker(
                 target_runtime=target_runtime,
                 need_runtime=need_rt,
                 need_model=self.need_model,
-                need_aligner=need_fa,
                 parent=self
             )
             self.worker.sig_progress.connect(self._on_progress)

@@ -3,16 +3,10 @@ import os
 import re
 import subprocess
 import wave
-import logging
-import threading
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Any, Union
 
 from .ffmpeg_helper import get_ffmpeg_path, run_ffmpeg
-
-logger = logging.getLogger("SubtitleGo.AudioProcessor")
-_VAD_MODEL = None
-_VAD_LOCK = threading.Lock()
 
 
 @dataclass
@@ -124,7 +118,7 @@ def extract_audio_to_wav(input_path: str, output_path: str, sample_rate: int = 1
             "-acodec", "pcm_s16le",
             "-ar", str(sample_rate),
             "-ac", "1",
-            "-af", "aresample=async=1:first_pts=0,highpass=f=120,lowpass=f=4000,dynaudnorm=f=75:g=15:m=4.0",
+            "-af", "aresample=async=1:first_pts=0,highpass=f=120,lowpass=f=4000,dynaudnorm=f=75:g=15:m=10.0",
             output_path
         ]
         res = run_ffmpeg(conditioned_args)
@@ -419,150 +413,31 @@ def detect_silence_intervals(
     return silences
 
 
-def get_silero_vad_model():
-    """
-    Loads and caches Silero VAD model on CPU.
-    Checks local models/silero_vad.jit first, then falls back to silero_vad package.
-    """
-    global _VAD_MODEL
-    with _VAD_LOCK:
-        if _VAD_MODEL is not None:
-            return _VAD_MODEL
-        torch = _get_torch()
-        if torch is None:
-            return None
-
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-        candidates = [
-            os.path.join(base_dir, "models", "silero_vad.jit"),
-            os.path.join(base_dir, "models", "silero_vad.onnx"),
-        ]
-        for c in candidates:
-            if os.path.isfile(c):
-                try:
-                    m = torch.jit.load(c, map_location="cpu")
-                    m.eval()
-                    _VAD_MODEL = m
-                    logger.info(f"Loaded Silero VAD from local model: {c}")
-                    return _VAD_MODEL
-                except Exception as e:
-                    logger.debug(f"Failed to load VAD from {c}: {e}")
-
-        try:
-            from silero_vad import load_silero_vad
-            m = load_silero_vad()
-            if hasattr(m, "eval"):
-                m.eval()
-            _VAD_MODEL = m
-            logger.info("Loaded Silero VAD via silero_vad package.")
-            return _VAD_MODEL
-        except Exception as e:
-            logger.debug(f"Failed to load VAD via package: {e}")
-
-        return None
-
-
-def detect_speech_intervals_vad(
-    audio_data: Any,
-    sr: int = 16000,
-    threshold: float = 0.50,
-    min_speech_duration_s: float = 0.25,
-    min_silence_duration_s: float = 0.30,
-    speech_pad_s: float = 0.05
-) -> Optional[List[Tuple[float, float]]]:
-    """
-    Detects true human speech intervals using neural Silero VAD.
-    Unlike volume-based filters (FFmpeg silencedetect), Silero VAD discriminates
-    human voice from background music, instruments, ambient noise, and sound effects.
-
-    Returns list of (start_s, end_s) speech intervals in seconds,
-    or None if neural VAD is unavailable.
-    """
-    torch = _get_torch()
-    if torch is None or audio_data is None:
-        return None
-
-    model = get_silero_vad_model()
-    if model is None:
-        return None
-
-    try:
-        from silero_vad import get_speech_timestamps
-    except ImportError:
-        return None
-
-    try:
-        import numpy as np
-        if isinstance(audio_data, np.ndarray):
-            if audio_data.ndim > 1:
-                audio_data = np.mean(audio_data, axis=0)
-            tensor_audio = torch.from_numpy(audio_data.astype(np.float32))
-        elif isinstance(audio_data, torch.Tensor):
-            tensor_audio = audio_data.float()
-            if tensor_audio.ndim > 1:
-                tensor_audio = torch.mean(tensor_audio, dim=0)
-        else:
-            return None
-
-        # Silero VAD expects 16000 Hz sample rate
-        if sr != 16000:
-            import torchaudio
-            resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=16000)
-            tensor_audio = resampler(tensor_audio)
-            sr = 16000
-
-        with torch.no_grad():
-            timestamps = get_speech_timestamps(
-                tensor_audio,
-                model,
-                threshold=threshold,
-                sampling_rate=sr,
-                min_speech_duration_ms=int(min_speech_duration_s * 1000),
-                min_silence_duration_ms=int(min_silence_duration_s * 1000),
-                speech_pad_ms=int(speech_pad_s * 1000),
-                return_seconds=True
-            )
-
-        intervals: List[Tuple[float, float]] = []
-        for ts in timestamps:
-            s = round(float(ts["start"]), 3)
-            e = round(float(ts["end"]), 3)
-            if e > s:
-                intervals.append((s, e))
-
-        logger.info(f"Silero VAD identified {len(intervals)} speech intervals.")
-        return intervals
-    except Exception as e:
-        logger.debug(f"Silero VAD execution failed, falling back to volume silence detection: {e}")
-        return None
-
-
 def segment_audio_smart(
     wav_path: str,
-    max_segment_duration: float = 7.0,
+    max_segment_duration: float = 8.0,
     min_segment_duration: float = 0.25,
     min_silence_duration: float = 0.30,
     silence_thresh_db: float = -38.0,
-    boundary_padding_s: float = 0.15,
+    boundary_padding_s: float = 0.20,
     audio_data: Optional[Any] = None,
     sr: int = 16000
 ) -> List[SpeechInterval]:
     """
     Intelligently segments audio into speech intervals corresponding to complete sentences
     and character dialogue turns:
-    1. Uses neural Silero VAD to reject background music and non-speech sound effects.
-    2. Falls back to acoustic volume silence detection if neural VAD is unavailable.
-    3. Uses acoustic energy valley search on long continuous speech to split at natural breaths/pauses.
-    4. Applies minimal padding at internal cut boundaries to eliminate cross-chunk duplicate audio.
-    5. Computes intra-segment pause timestamps for high-precision clause alignment.
-
+    1. Uses hierarchical silence detection (0.30s default) to capture character turn-overs.
+    2. Uses acoustic energy valley search on long continuous speech to split at natural breaths/pauses.
+    3. Retains true speech start/end timestamps separate from acoustic extraction padding.
+    4. Computes intra-segment pause timestamps for high-precision clause alignment.
+    
     Returns a list of SpeechInterval objects (which unpack as (start, end) tuples for full backward compatibility).
     """
     duration = get_audio_duration_seconds(wav_path)
     if duration <= 0:
         return []
 
-    # If audio data is not provided in memory, load it for VAD and energy valley search
+    # If audio data is not provided in memory, load it for acoustic energy valley search
     if audio_data is None:
         sf = _get_soundfile()
         if sf:
@@ -572,58 +447,42 @@ def segment_audio_smart(
             except Exception:
                 pass
 
-    # Step 1: Attempt Neural Silero Voice Activity Detection (Music & Noise Rejection)
-    vad_spans = detect_speech_intervals_vad(
-        audio_data=audio_data,
-        sr=sr,
-        threshold=0.50,
-        min_speech_duration_s=min_segment_duration,
-        min_silence_duration_s=min_silence_duration
+    # Detect conversational turnover and sentence pauses
+    silences = detect_silence_intervals(
+        wav_path,
+        silence_thresh_db=silence_thresh_db,
+        min_silence_duration=min_silence_duration
     )
 
-    if vad_spans is not None:
-        # Silero VAD ran successfully. If no speech is detected (e.g. pure music or ambient noise),
-        # return empty list so ASR does not hallucinate over instrumental sections.
-        raw_spans = vad_spans
-    else:
-        # Fallback to FFmpeg volume-based silence detection
-        silences = detect_silence_intervals(
-            wav_path,
-            silence_thresh_db=silence_thresh_db,
-            min_silence_duration=min_silence_duration
+    # If ffmpeg silencedetect found no silences but audio array is present, try in-memory RMS pause detector
+    if not silences and audio_data is not None:
+        rms_pauses = find_intra_chunk_pauses(
+            audio_data,
+            sr=sr,
+            offset_s=0.0,
+            min_pause_s=min_silence_duration,
+            silence_thresh_ratio=0.20
         )
+        if rms_pauses:
+            silences = rms_pauses
 
-        if not silences and audio_data is not None:
-            rms_pauses = find_intra_chunk_pauses(
-                audio_data,
-                sr=sr,
-                offset_s=0.0,
-                min_pause_s=min_silence_duration,
-                silence_thresh_ratio=0.20
-            )
-            if rms_pauses:
-                silences = rms_pauses
+    raw_spans: List[Tuple[float, float]] = []
+    current_pos = 0.0
 
-        raw_spans = []
-        current_pos = 0.0
-
-        for s_start, s_end in silences:
-            if s_start > current_pos:
-                speech_len = s_start - current_pos
-                if speech_len >= min_segment_duration:
-                    raw_spans.append((round(current_pos, 3), round(s_start, 3)))
-            current_pos = s_end
-
-        if current_pos < duration:
-            speech_len = duration - current_pos
+    for s_start, s_end in silences:
+        if s_start > current_pos:
+            speech_len = s_start - current_pos
             if speech_len >= min_segment_duration:
-                raw_spans.append((round(current_pos, 3), round(duration, 3)))
+                raw_spans.append((round(current_pos, 3), round(s_start, 3)))
+        current_pos = s_end
 
-        if not raw_spans:
-            raw_spans = [(0.0, duration)]
+    if current_pos < duration:
+        speech_len = duration - current_pos
+        if speech_len >= min_segment_duration:
+            raw_spans.append((round(current_pos, 3), round(duration, 3)))
 
     if not raw_spans:
-        return []
+        raw_spans = [(0.0, duration)]
 
     # Subdivide long continuous spans using acoustic energy valley search
     final_intervals: List[SpeechInterval] = []
@@ -637,7 +496,7 @@ def segment_audio_smart(
                 end_s=sp_end,
                 max_duration=max_segment_duration,
                 min_duration=min_segment_duration,
-                target_duration=min(5.5, max_segment_duration)
+                target_duration=min(6.0, max_segment_duration)
             )
         elif sp_dur > max_segment_duration:
             num_sub = math.ceil(sp_dur / max_segment_duration)
@@ -646,18 +505,10 @@ def segment_audio_smart(
         else:
             sub_spans = [(sp_start, sp_end)]
 
-        num_subs = len(sub_spans)
-        for sub_idx, (sub_s, sub_e) in enumerate(sub_spans):
-            # For internal cuts split from continuous speech, avoid backward/forward overlap padding
-            # that causes words at the cut point to be transcribed in both chunks.
-            is_internal_start = (sub_idx > 0)
-            is_internal_end = (sub_idx < num_subs - 1)
-
-            pad_left = 0.02 if is_internal_start else boundary_padding_s
-            pad_right = 0.02 if is_internal_end else boundary_padding_s
-
-            pad_s = max(0.0, sub_s - pad_left)
-            pad_e = min(duration, sub_e + pad_right)
+        for sub_s, sub_e in sub_spans:
+            # Padded bounds for ASR acoustic context
+            pad_s = max(0.0, sub_s - boundary_padding_s)
+            pad_e = min(duration, sub_e + boundary_padding_s)
 
             # Find intra-segment micro-pauses for clause alignment
             pauses = []
